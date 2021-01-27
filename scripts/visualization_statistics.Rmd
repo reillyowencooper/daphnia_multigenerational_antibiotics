@@ -1,0 +1,833 @@
+---
+title: "visualization_statistics"
+author: "Reilly Cooper"
+date: "1/21/2021"
+output: html_document
+---
+
+# Introduction: Loading packages and setting up color palettes
+
+Required packages and other setup.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(tidyverse)
+library(survival)
+library(survminer)
+library(rstatix)
+library(cowplot)
+library(ggpubr)
+library(speedyseq)
+library(DESeq2)
+theme_set(theme_cowplot(font_size = 14))
+```
+
+Preparing color palettes.
+```{r palettes}
+# Colors for treatment type (CTRL, REC, AB)
+treatment_colors <- c("CTRL" = "#1C366B",
+                      "AB" = "#B62A3D",
+                      "REC" = "#EDCB64")
+
+# Colors for bacterial phyla
+phylum_colors <- c("Acidobacteria" = "#27223C",
+                  "Actinobacteria" = "#B62A3D",
+                  "Armatimonadetes" = "#3E3953",
+                  "Bacteroidetes" = "#A35E60",
+                  "Chlamydiae" = "#C6B19D",
+                  "Deinococcus-Thermus" = "#F24D29",
+                  "Firmicutes" = "#D3DDDC",
+                  "Parcubacteria" = "#55506A",
+                  "Planctomycetes" = "#6C6781",
+                  "Proteobacteria" = "#7496D2",
+                  "Verrucomicrobia" = "#E6A2C5")
+
+# Colors for bacterial classes
+class_colors <- c("<=5% Abundant/Unidentified" = "#C4CFD0",
+                  "Actinomycetia" = "#A35E60",
+                  "Alphaproteobacteria" = "#E6A2C5",
+                  "Bacilli" = "#CC8B3C",
+                  "Bacteroidia" = "#76A08A",
+                  "Blastocatellia" = "#FCD16B",
+                  "Clostridia" = "#D3DDDC",
+                  "Deinococci" = "#C6B19D",
+                  "Gammaproteobacteria" = "#1C366B",
+                  "Negativicutes" = "#AC6E49",
+                  "Planctomycetes" = "#957A6D",
+                  "Verrucomicrobiae" = "#456355")
+
+# Colors for bacterial families
+family_colors <- c("<=5% Abundant/Unidentified" = "#C4CFD0",
+                   "Bacteroidaceae" = "#1C366B",
+                   "Beijerinckiaceae" = "#F24D29",
+                   "Bifidobacteriaceae" = "#E5C4A1",
+                   "Burkholderiaceae" = "#1DACE8",
+                   "Caulobacteraceae" = "#9A872D",
+                   "Chitinophagaceae" = "#F5CDB6",
+                  "Crocinitomicaceae" = "#F7B0AA",
+                  "Deinococcaceae" = "#FDDDA4",
+                  "Flavobacteriaceae" = "#76A08A",
+                  "Hyphomicrobiaceae" = "#E6A2C5",
+                  "Lachnospiraceae" = "#C7CEF6",
+                  "Midichloriaceae" = "#D8A49B",
+                  "Moraxellaceae" = "#7496D2",
+                  "Mycobacteriaceae" = "#B62A3D",
+                  "Nevskiaceae" = "#EDCB64",
+                  "Pseudomonadaceae" = "#B5966D",
+                  "Pyrinomonadaceae" = "#DAECED",
+                  "Rhizobiaceae" = "#CECD7B",
+                  "Saprospiraceae" = "#A35E60",
+                  "Sphingobacteriaceae" = "#541F12",
+                  "Sphingomonadaceae" = "#CC8B3C",
+                  "Spirosomaceae" = "#957A6D",
+                  "Weeksellaceae" = "#456355",
+                  "Xanthobacteraceae" = "#27223C")
+
+# Making sure factor levels are in correct order
+treatment_type_levels <- c("CTRL", "REC", "AB")
+treatment_levels <- c("C1", "C2", "C3", "C4", "C5", 
+                                       "A1", "R1→1", "R1→2", "R1→3", "R1→4", 
+                                       "A2", "R2→1", "R2→2", "R2→3", 
+                                       "A3", "R3→1", "R3→2", 
+                                       "A4", "R4→1", 
+                                       "A5")
+
+# Fixing generation labels for figures to read 1-5 instead of 0-4
+gen_labels <- c("1", "2", "3", "4", "5")
+```
+
+# Part 1: Life History Data
+
+Loading life history and survival data, then cleaning and adding important variables.
+```{r dataload, warning=FALSE, error=FALSE}
+life_history <- read.csv(here("data", "life_history.csv"))
+survival <- read.csv(here("data", "survival.csv"))
+
+# Adding cumulative reproduction and reproductive timing to life history
+life_history <- life_history %>%
+  mutate(time_to_first_brood = brood_one_day,
+         time_to_second_brood = brood_two_day - brood_one_day,
+         time_to_third_brood = brood_three_day - brood_two_day,
+         cumulative_reproduction = rowSums(.[names(.)[c(9,11,13)]], na.rm = TRUE),
+         treatment = ifelse(treatment == "control", "CTRL", 
+                            ifelse(treatment == "antibiotic", "AB", "REC")),
+         grouping = ifelse(figure_labels %in% c("C1", "C2", "C3", "C4", "C5"), "1", NA),
+         grouping = ifelse(figure_labels %in% c("A1", "R1->1", "R1->2", "R1->3", "R1->4"), "2", grouping),
+         grouping = ifelse(figure_labels %in% c("A2", "R2->1", "R2->2", "R2->3"), "3", grouping),
+         grouping = ifelse(figure_labels %in% c("A3", "R3->1", "R3->2"), "4", grouping),
+         grouping = ifelse(figure_labels %in% c("A4", "R4->1"), "5", grouping),
+         grouping = ifelse(figure_labels == "A5", "6", grouping))
+
+# Changing arrow to unicode
+life_history$figure_labels <- gsub("->", "→", life_history$figure_labels)
+
+# Making sure factors are coded as factors
+life_history$gen <- as.factor(life_history$gen)
+life_history$treatment <- as.factor(life_history$treatment)
+life_history$detailed_treatment <- as.factor(life_history$detailed_treatment)
+
+# Reordering levels
+life_history$figure_labels <- factor(life_history$figure_labels, levels = treatment_levels)
+life_history$treatment = factor(life_history$treatment, levels = treatment_type_levels)
+
+# Adding proportion to survival data
+survival <- survival %>%
+  mutate(proportion_alive = number_alive/total_in_treatment)
+```
+
+Daphnia final size visualization and statistics.
+```{r size, warning=FALSE, error=FALSE}
+# Statistics
+final_size_aov <- aov(final_size ~ gen*treatment, data = life_history)
+final_size_aov_summary <- anova_summary(final_size_aov)
+final_size_tukey <- tukey_hsd(final_size_aov)
+
+# Saving statistics
+write.csv(final_size_aov_summary, here("statistics", "final_size_anova.csv"))
+write.csv(final_size_tukey, here("statistics", "final_size_tukey.csv"))
+
+# Visualizing final size by generation
+size_by_generation_plot <- ggplot(life_history, aes(gen, final_size)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.5, width = 0.1, height = 0, size = 4, aes(color = treatment)) +
+  scale_color_manual(values = treatment_colors,
+                     name = "Treatment Type") +
+  xlab("Generation") +
+  ylab("Final size (mm)") +
+  annotate("text", x = 1.25, y = 2.4, label = "Anova, p<0.0001") +
+  annotate("text", x = 2, y = 3.8, label = "*") +
+  annotate("text", x = 3, y = 3.8, label = "ns") +
+  annotate("text", x = 4, y = 3.8, label = "ns") +
+  annotate("text", x = 5, y = 3.8, label = "****") +
+  scale_x_discrete(labels = gen_labels)
+
+# Visualizing size by treatment
+size_by_treatment_plot <- ggplot(life_history, aes(figure_labels, final_size)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.5, width = 0.1, height = 0, aes(color = treatment)) +
+  scale_color_manual(values = treatment_colors,
+                     name = "Treatment Type") +
+  ylab("Final size (mm)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        axis.title.x = element_blank()) +
+  annotate("text", x = 4, y = 2.4, label = "Anova, p=0.0003")
+```
+
+Cumulative reproduction.
+```{r cumulative reproduction, warning=FALSE, error=FALSE}
+# Statistics
+cum_repro_aov <- aov(cumulative_reproduction ~ gen*treatment, data = life_history)
+cum_repro_aov_summary <- anova_summary(cum_repro_aov)
+cum_repro_tukey <- tukey_hsd(cum_repro_aov)
+
+# Saving statistics
+write.csv(cum_repro_aov_summary, here("statistics", "cumulative_reproduction_anova.csv"))
+write.csv(cum_repro_tukey, here("statistics", "cumulative_reproduction_tukey.csv"))
+
+# Visualizing by generation
+cum_repro_by_generation_plot <- ggplot(life_history, aes(gen, cumulative_reproduction)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.5, width = 0.1, height = 0, size = 4, aes(color = treatment)) +
+  scale_color_manual(values = treatment_colors,
+                     name = "Treatment Type") +
+  xlab("Generation") +
+  ylab("Cumulative reproduction") +
+  annotate("text", x = 1.25, y = 28, label = "Anova, p<0.0001") +
+  annotate("text", x = 2, y = 32, label = "***") +
+  annotate("text", x = 3, y = 32, label = "ns") +
+  annotate("text", x = 4, y = 32, label = "ns") +
+  annotate("text", x = 5, y = 32, label = "****") +
+  scale_x_discrete(labels = gen_labels)
+
+# Visualization by treatment
+cum_repro_by_treatment_plot <- ggplot(life_history, aes(figure_labels, cumulative_reproduction)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.5, width = 0.1, height = 0, aes(color = treatment)) +
+  scale_color_manual(values = treatment_colors,
+                     name = "Treatment Type") +
+  ylab("Cumulative reproduction") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        axis.title.x = element_blank()) +
+  annotate("text", x = 4, y = 28, label = "Anova, p=0.31")
+```
+
+Survival.
+```{r survival, warning=FALSE, error=FALSE}
+# Mutating generation to be from 1-5 instead of 0-4
+survival <- survival %>%
+  mutate(gen = ifelse(gen == "4", "5", gen)) %>%
+  mutate(gen = ifelse(gen == "3", "4", gen)) %>%
+  mutate(gen = ifelse(gen == "2", "3", gen)) %>%
+  mutate(gen = ifelse(gen == "1", "2", gen)) %>%
+  mutate(gen = ifelse(gen == "0", "1", gen))
+
+survival$detailed_treatment <- gsub("->", "→", survival$detailed_treatment)
+# Adding treatment colors
+survival_colors <- c("C1" = "#1C366B", "C2" = "#1C366B", "C3" = "#1C366B", "C4" = "#1C366B",
+                   "C5" = "#1C366B","R1→1" = "#EDCB64", "R2→1" = "#A8861F", 
+                   "R3→1" = "#634100", "R4→1" = "#351300", "R1→2" = "#EDCB64",
+                   "R2→2" = "#A8861F", "R3→2" = "#634100", "R1→3" = "#EDCB64",
+                   "R2→3" = "#A8861F", "R1→4" = "#EDCB64", "A1" = "#B62A3D", 
+                   "A2" = "#B62A3D", "A3" = "#B62A3D", "A4" = "#B62A3D", "A5" = "#B62A3D")
+
+survival_plot <- ggplot(survival, aes(day, proportion_alive, group = detailed_treatment, color = detailed_treatment, linetype = treatment)) +
+  geom_line(size = 1) +
+  scale_color_manual(values = survival_colors,
+                     name = "Treatment") +
+  facet_wrap(~ gen, nrow = 1) +
+  theme(legend.position = "bottom",
+        strip.background = element_blank()) +
+  xlab("Day") +
+  ylab("Proportion Alive") +
+  guides(linetype=FALSE)
+
+# Statistics using the life history data
+# First filtering out any data that does not have final survival day tracked, then
+# adding dummy variable for animals that survived to the end date
+life_history_survival <- life_history %>%
+  filter(!is.na(final_survival_day)) %>%
+  mutate(survival_dummy = ifelse(final_survival_day == 21, 1, 2))
+
+survival_cox <- coxph(Surv(final_survival_day, survival_dummy) ~ gen + treatment,
+                      data = life_history_survival)
+
+survival_summary <- summary(survival_cox)
+
+# Writing statistics to file
+write.csv(survival_summary$coefficients, here("statistics", "survival_coxph.csv"))
+```
+
+# Part 2: Microbiome metrics
+
+First, loading in data and cleaning.
+```{r microbiome data, warning=FALSE, error=FALSE}
+microbiome <- readRDS(here("data", "16s.rds")) %>%
+  subset_samples(generation != 5) %>% # Removing sixth generation juvenile samples
+  subset_taxa(Phylum != "Cyanobacteria") # Removing reads that are from the algal food
+
+sample_data(microbiome)$treatment <- gsub("->", "→", sample_data(microbiome)$treatment)
+
+# Reordering factors and ensuring they are factors
+sample_data(microbiome)$generation <- factor(sample_data(microbiome)$generation)
+sample_data(microbiome)$treatment <- factor(sample_data(microbiome)$treatment, levels = treatment_levels)
+sample_data(microbiome)$trt_type <- factor(sample_data(microbiome)$trt_type, levels = treatment_type_levels)
+
+# Creating transformed version
+microbiome_transformed <- transform_sample_counts(microbiome, function(x) x/sum(x))
+
+# Melting into tidy dataframe
+microbiome_melted <- psmelt(microbiome_transformed) %>%
+  select(-sample_Sample)
+```
+
+Calculating alpha diversity.
+```{r alpha div, warning=FALSE, error=FALSE}
+# Creating alpha diversity plot to grab data
+adiv <- plot_richness(microbiome, measures = "InvSimpson", x = "treatment")
+adiv_data <- data.frame(adiv$data) %>%
+  select(Sample, generation, treatment, trt_type, gen_in_ab, gen_in_ctrl, sample_number, value)
+colnames(adiv_data)[8] <- "inverse_simpson"
+
+# Statistics
+simpson_aov <- aov(inverse_simpson ~ generation*trt_type, data = adiv_data)
+simpson_aov_summary <- anova_summary(simpson_aov)
+simpson_tukey <- tukey_hsd(simpson_aov)
+
+# Saving statistics
+write.csv(simpson_aov_summary, here("statistics", "simpson_index_anova.csv"))
+write.csv(simpson_tukey, here("statistics", "simpson_index_tukey.csv"))
+
+# Visualizing by generation
+alphadiv_by_generation_plot <- ggplot(adiv_data, aes(generation, inverse_simpson)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.5, width = 0.1, height = 0, size = 4, aes(color = trt_type)) +
+  scale_color_manual(values = treatment_colors,
+                     name = "Treatment Type") +
+  scale_x_discrete(labels = gen_labels) +
+  xlab("Generation") +
+  ylab("Inverse Simpson Index") +
+  annotate("text", x = 4.5, y = 30, label = "Anova, p<0.0001") +
+  annotate("text", x = 2, y = 40, label = "ns") +
+  annotate("text", x = 3, y = 40, label = "ns") +
+  annotate("text", x = 4, y = 40, label = "*") +
+  annotate("text", x = 5, y = 40, label = "ns")
+
+# By treatment
+alphadiv_by_treatment_plot <- ggplot(adiv_data, aes(treatment, inverse_simpson)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.5, width = 0.1, height = 0, aes(color = trt_type)) +
+  scale_color_manual(values = treatment_colors,
+                     name = "Treatment Type") +
+  ylab("Inverse Simpson Index") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        axis.title.x = element_blank()) +
+  annotate("text", x = 4.5, y = 30, label = "Anova, p=0.06")
+```
+
+Calculating number of unique ASVs per treatment and generation.
+```{r asv number, warning=FALSE, error=FALSE}
+asvp <- plot_richness(microbiome, x = "treatment", measures = "Observed")
+asvs <- data.frame(asvp$data)
+
+# Statistics
+asv_aov <- aov(value ~ trt_type*generation, data = asvs)
+asv_aov_summary <- anova_summary(asv_aov)
+asv_tukey <- tukey_hsd(asv_aov)
+
+# Saving statistics
+write.csv(asv_aov_summary, here("statistics", "unique_asvs_anova.csv"))
+write.csv(asv_tukey, here("statistics", "unique_asvs_tukey.csv"))
+
+# Visualizing per generations
+asvs_by_generation_plot <- ggplot(asvs, aes(generation, value)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.5, width = 0.1, height = 0, size = 4, aes(color = trt_type)) +
+  scale_color_manual(values = treatment_colors,
+                     name = "Treatment Type") +
+  xlab("Generation") +
+  ylab("Unique ASVs") +
+  annotate("text", x = 1.25, y = 210, label = "Anova, p=0.005") +
+  annotate("text", x = 2, y = 260, label = "ns") +
+  annotate("text", x = 3, y = 260, label = "ns") +
+  annotate("text", x = 4, y = 260, label = "ns") +
+  annotate("text", x = 5, y = 260, label = "ns") +
+  scale_x_discrete(labels = gen_labels)
+
+# By treatment
+asvs_by_treatment_plot <- ggplot(asvs, aes(treatment, value)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.5, width = 0.1, height = 0, aes(color = trt_type)) +
+  scale_color_manual(values = treatment_colors,
+                     name = "Treatment Type") +
+  ylab("Unique ASVs") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        axis.title.x = element_blank()) +
+  annotate("text", x = 3, y = 225, label = "Anova, p=0.092")
+```
+
+Examining beta diversity.
+```{r beta diversity, warning=FALSE, error=FALSE}
+# Making new microbiome object to change generations to 1-5
+microbiome_correct_gen <- microbiome
+microbiome_correct_gen@sam_data$generation <- gsub("4", "5", microbiome_correct_gen@sam_data$generation)
+microbiome_correct_gen@sam_data$generation <- gsub("3", "4", microbiome_correct_gen@sam_data$generation)
+microbiome_correct_gen@sam_data$generation <- gsub("2", "3", microbiome_correct_gen@sam_data$generation)
+microbiome_correct_gen@sam_data$generation <- gsub("1", "2", microbiome_correct_gen@sam_data$generation)
+microbiome_correct_gen@sam_data$generation <- gsub("0", "1", microbiome_correct_gen@sam_data$generation)
+
+# Statistics
+relabund <- microbiome::transform(microbiome_correct_gen, "compositional") # Transforming to compositional data
+otu <- microbiome::abundances(relabund) # Extracting ASVs
+meta <- microbiome::meta(relabund) # Extracting metadata
+permanova <- vegan::adonis(t(otu) ~ generation + treatment, data = meta, permutation = 999, method = "bray")
+gen_label <- paste("'Generation'~italic(R)^2==~", round(permanova$aov.tab$R2[1], digits = 3))
+gen_p <- paste("~italic(P)==~", round(permanova$aov.tab$`Pr(>F)`[1], digits = 3))
+trt_label <- paste("'Treatment'~italic(R)^2==~", round(permanova$aov.tab$R2[2], digits = 3))
+trt_p <- paste("~italic(P)==~", round(permanova$aov.tab$`Pr(>F)`[2], digits = 3))
+
+# Saving permanova
+write.csv(permanova$aov.tab, here("statistics", "complete_permanova.csv"))
+
+# Big picture first, looking at beta diversity across treatments and generations
+full_ord = ordinate(microbiome_correct_gen, "DCA")
+beta_by_gen_trt_plot <- plot_ordination(microbiome_correct_gen, full_ord, 
+                                   type = "samples",
+                                   color = "trt_type", 
+                                   shape = "generation") +
+  scale_color_manual(values = treatment_colors) +
+  geom_point(size = 6,
+             aes(fill = trt_type)) +
+  guides(color = guide_legend("Treatment Type"),
+         shape = guide_legend("Generation"),
+         fill = FALSE) +
+  xlim(-1.5, 2.5) +
+  ylim(-2.5, 2) +
+  annotate("text", x = 0, y = -1.55, label = gen_label, parse = TRUE) +
+  annotate("text", x = 0, y = -1.8, label = gen_p, parse = TRUE) +
+  annotate("text", x = 0, y = -2.05, label = trt_label, parse = TRUE) +
+  annotate("text", x = 0, y = -2.3, label = trt_p, parse = TRUE)
+```
+
+Individual pairwise comparisons of community composition in the final generation of each treatment
+to the first of each treatment, then comparing the final of each treatment to each other.
+```{r pairwise permanovas, warning=FALSE, error=FALSE}
+# Comparisons are: C5:C1, A5:A1, R1->4:A1, R2->3:A2, R3->2:A3, R4->1:A4, A5:C5, R1->4:C5, R2->3:C5, R3->2:C5, R4->1:C5.
+
+# Making subset phyloseq objects
+c5c1 <- subset_samples(microbiome_correct_gen, treatment %in% c("C5", "C1"))
+a5a1 <- subset_samples(microbiome_correct_gen, treatment %in% c("A5", "A1"))
+a5c5 <- subset_samples(microbiome_correct_gen, treatment %in% c("A5", "C5"))
+r14c5 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→4", "C5"))
+r23c5 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→3", "C5"))
+r32c5 <- subset_samples(microbiome_correct_gen, treatment %in% c("R3→2", "C5"))
+r41c5 <- subset_samples(microbiome_correct_gen, treatment %in% c("R4→1", "C5"))
+
+pairwise_list <- list(c5c1, a5a1, a5c5, r14c5, r23c5, r32c5, r41c5)
+# Making function to transform to relative abundance, extract otus and abundances, and run permanova
+get_permanova <- function(ps_obj) {
+  rel <- microbiome::transform(ps_obj, "compositional")
+  otu <- microbiome::abundances(rel)
+  meta <- microbiome::meta(rel)
+  permanova <- vegan::adonis(t(otu) ~ treatment,
+                             data = meta, permutations = 999, method = "bray")
+  perm_aovtab <- data.frame(permanova$aov.tab)
+  return(perm_aovtab)
+}
+
+# Getting permanova results for each pairwise comparison
+pairwise_res <- lapply(pairwise_list, get_permanova)
+
+pairwise_output <- plyr::ldply(pairwise_res, data.frame) %>% 
+  mutate(variables = rep(c("treatment", "Residuals", "Total"), times = 7)) %>%
+  mutate(group1 = c(rep("C5", 3),
+                        rep("A5", 3),
+                        rep("A5", 3),
+                        rep("R1→4", 3),
+                        rep("R2→3", 3),
+                        rep("R3→2", 3),
+                        rep("R4→1", 3)),
+         group2 = c(rep("C1", 3),
+                    rep("A1", 3),
+                    rep("C5", 3),
+                    rep("C5", 3),
+                    rep("C5", 3),
+                    rep("C5", 3),
+                    rep("C5", 3)))
+
+# Saving to file
+write.csv(pairwise_output, here("statistics", "pairwise_betadiv_permanovas.csv"))
+```
+
+Making figures showing the changes across generations of CTRL and AB, and doing PERMANOVAs for both.
+```{r generational permanovas, warning=FALSE, error=FALSE}
+# Subsetting data
+ctrl_sub <- subset_samples(microbiome_correct_gen, trt_type == "CTRL")
+ab_sub <- subset_samples(microbiome_correct_gen, trt_type == "AB")
+
+# Changing the function to work on generation instead of treatment
+get_permanova_gen <- function(ps_obj) {
+  rel <- microbiome::transform(ps_obj, "compositional")
+  otu <- microbiome::abundances(rel)
+  meta <- microbiome::meta(rel)
+  permanova <- vegan::adonis(t(otu) ~ generation,
+                             data = meta, permutations = 999, method = "bray")
+  perm_aovtab <- data.frame(permanova$aov.tab)
+  return(perm_aovtab)
+}
+
+# Running Permanovas
+ctrl_permanova <- get_permanova_gen(ctrl_sub)
+ab_permanova <- get_permanova_gen(ab_sub)
+
+# Saving Permanovas
+write.csv(ctrl_permanova, here("statistics", "ctrl_permanova.csv"))
+write.csv(ab_permanova, here("statistics", "ab_permanova.csv"))
+
+# Making figures for both, using a special color palette to show the five generations
+generation_colors <- c("#7496D2", "#55506A", "#F24D29", "#E6A2C5", "#76A08A")
+
+beta_ctrl_plot <- plot_ordination(ctrl_sub, 
+                                  full_ord, 
+                                  type = "samples",
+                                  color = "treatment") +
+  scale_color_manual(values = generation_colors, na.translate = FALSE) +
+  scale_fill_manual(values = generation_colors) +
+  geom_point(size = 6,
+             aes(fill = treatment)) +
+  geom_polygon(aes(fill = treatment), alpha = 0.25) +
+  guides(color = guide_legend("Treatment"),
+         fill = FALSE) +
+  xlim(-1.5, 2.5) +
+  ylim(-2.5, 2) +
+  annotate("text", x = 0, y = -1.55, 
+           label = paste("'Generation'~italic(R)^2==~", round(ctrl_permanova$R2[1], digits = 3)), parse = TRUE) +
+  annotate("text", x = 0, y = -1.8, 
+           label = paste("~italic(P)==~", round(ctrl_permanova$Pr..F.[1], digits = 3)), parse = TRUE)
+
+beta_ab_plot <- plot_ordination(ab_sub, 
+                                  full_ord, 
+                                  type = "samples",
+                                  color = "treatment") +
+  scale_color_manual(values = generation_colors, na.translate = FALSE) +
+  scale_fill_manual(values = generation_colors) +
+  geom_point(size = 6,
+             aes(fill = treatment)) +
+  geom_polygon(aes(fill = treatment), alpha = 0.25) +
+  guides(color = guide_legend("Treatment"),
+         fill = FALSE) +
+  xlim(-1.5, 2.5) +
+  ylim(-2.5, 2) +
+  annotate("text", x = 0, y = -1.55, 
+           label = paste("'Generation'~italic(R)^2==~", round(ab_permanova$R2[1], digits = 3)), parse = TRUE) +
+  annotate("text", x = 0, y = -1.8, 
+           label = paste("~italic(P)==~", round(ab_permanova$Pr..F.[1], digits = 3)), parse = TRUE)
+```
+
+Visualizing microbiome composition at the family taxonomic rank.
+```{r composition, warning=FALSE, error=FALSE}
+# Merging by treatment, then transforming to abundance and melting
+microbiome_trtmerge <- merge_samples2(microbiome, "treatment")
+microbiome_trtmerge_transformed <- transform_sample_counts(microbiome_trtmerge, function(x) x/sum(x))
+microbiome_trtmerge_melted <- psmelt(microbiome_trtmerge_transformed)
+# Filtering familes and classes with <=5% abundance across all samples
+microbiome_familysummary <- microbiome_trtmerge_melted %>% 
+  group_by(Family) %>%
+  summarise(family_abundance = sum(Abundance)) %>%
+  mutate(new_family = ifelse(family_abundance <= 0.05, "<=5% Abundant/Unidentified", Family))
+microbiome_classsummary <- microbiome_trtmerge_melted %>%
+  group_by(Class) %>%
+  summarise(class_abundance = sum(Abundance)) %>%
+  mutate(new_class = ifelse(class_abundance <= 0.05, "<=5% Abundant/Unidentified", Class))
+
+microbiome_trtmerge_melted <- merge(microbiome_trtmerge_melted, 
+                                    microbiome_familysummary, 
+                                    by = "Family", all.x = TRUE) %>%
+  mutate(new_family = ifelse(is.na(new_family), "<=5% Abundant/Unidentified", new_family))
+
+microbiome_trtmerge_melted <- merge(microbiome_trtmerge_melted,
+                                    microbiome_classsummary,
+                                    by = "Class", all.x = TRUE) %>%
+  mutate(new_class = ifelse(is.na(new_class), "<=5% Abundant/Unidentified", new_class))
+
+microbiome_class_composition_plot <- ggplot(microbiome_trtmerge_melted, 
+                                            aes(treatment, Abundance, fill = new_class)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = class_colors) +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        legend.position = "bottom") +
+  ylab("Relative Abundance") +
+  guides(fill = guide_legend("Class"))
+```
+
+Correlating important taxa with host life history traits (reproduction and final size). Because antibiotics disrupt the "normal" microbiota, this analysis only uses CTRL animals. 
+```{r taxa correlation, warning=FALSE, error=FALSE}
+# Loading average life history for each pooled sample
+pooled_life_history <- read.csv(here("data", "pooled_sample_life_history.csv")) %>%
+  filter(generation != 5)
+
+# First renaming ASVs to keep track of at the end
+sequences <- Biostrings::DNAStringSet(taxa_names(microbiome))
+names(sequences) <- taxa_names(microbiome)
+microbiome_named <- merge_phyloseq(microbiome, sequences)
+taxa_names(microbiome_named) <- paste0("ASV", seq(ntaxa(microbiome_named)))
+
+microbiome_transformed_melted <- psmelt(transform_sample_counts(microbiome_named, function(x) x/sum(x))) %>%
+  filter(trt_type == "CTRL")
+# Merge data
+mb_lh <- merge(microbiome_transformed_melted, pooled_life_history, by = "Sample")
+
+# Running correlation tests for average final size and cumulative reproduction
+mb_lh_repro_cor <- mb_lh %>% group_by(OTU) %>%
+  nest(data = -OTU) %>%
+  mutate(cor=map(data,~cor.test(.x$avg_cumulative_reproduction, .x$Abundance, method = "pearson"))) %>%
+  mutate(tidied = map(cor, tidy)) %>% 
+  unnest(tidied) %>% 
+  select(-data, -cor)
+
+mb_lh_size_cor <- mb_lh %>% group_by(OTU) %>%
+  nest(data = -OTU) %>%
+  mutate(cor=map(data,~cor.test(.x$avg_final_size, .x$Abundance, method = "pearson"))) %>%
+  mutate(tidied = map(cor, tidy)) %>% 
+  unnest(tidied) %>% 
+  select(-data, -cor)
+
+# Saving correlations
+write.csv(mb_lh_repro_cor, here("statistics", "asv_reproduction_correlations.csv"))
+write.csv(mb_lh_size_cor, here("statistics", "asv_size_correlations.csv"))
+# Getting mean abundances for each ASV so top 5 most abundant ASVs can be used in figure
+mb_lh_meanabund <- mb_lh %>% group_by(OTU) %>%
+  summarize(meanabund = mean(Abundance))
+
+mb_lh_repro_genera <- merge(mb_lh_repro_cor, mb_lh_meanabund) %>% filter(p.value < 0.05) %>%
+  arrange(desc(meanabund)) %>%
+  head(n = 5)
+mb_lh_repro_genera <- as.vector(unlist(mb_lh_repro_genera$OTU))
+
+mb_lh_size_genera <- merge(mb_lh_size_cor, mb_lh_meanabund) %>% filter(p.value < 0.05) %>%
+  arrange(desc(meanabund)) %>%
+  head(n = 5)
+mb_lh_size_genera <- as.vector(unlist(mb_lh_size_genera$OTU))
+
+# Adding labels to mb_lh
+mb_lh <- mb_lh %>%
+  mutate(polished_genus = ifelse(!is.na(Genus),
+                                 paste0(Genus, " (", OTU, ")"),
+                                 ifelse(!is.na(Family),
+                                         paste0(Family, " (", OTU, ")"),
+                                        ifelse(!is.na(Order),
+                                               paste0(Order, " (", OTU, ")"),
+                                              paste0(Class, " (", OTU, ")")))))
+# Visualizing
+repro_abund_cor_plot <- mb_lh %>% filter(OTU %in% mb_lh_repro_genera) %>%
+  mutate(label = polished_genus) %>%
+  ggplot(aes(Abundance,avg_cumulative_reproduction)) +
+  geom_point(aes(shape = generation.x)) +
+  stat_smooth(aes(color = Class, fill = Class),
+              method = "lm",
+              se = TRUE,
+              linetype = 2,
+              alpha = 0.5) +
+  stat_cor() +
+  scale_color_manual(values = class_colors) +
+  scale_fill_manual(values = class_colors) +
+  facet_wrap(~ label, scales = "free_x", nrow = 1) +
+  xlab("Relative Abundance") +
+  ylab("Mean Cumulative Reproduction") +
+  theme(strip.background = element_blank()) +
+  guides(shape = guide_legend("Generation"),
+         color = FALSE)
+
+size_abund_cor_plot <- mb_lh %>% filter(OTU %in% mb_lh_size_genera) %>%
+  mutate(label = polished_genus) %>%
+  ggplot(aes(Abundance,avg_final_size)) +
+  geom_point(aes(shape = generation.x)) +
+  stat_smooth(aes(color = Class, fill = Class),
+              method = "lm",
+              se = TRUE,
+              linetype = 2,
+              alpha = 0.5) +
+  stat_cor() +
+  scale_color_manual(values = class_colors) +
+  scale_fill_manual(values = class_colors) +
+  facet_wrap(~ label, scales = "free_x", nrow = 1) +
+  xlab("Relative Abundance") +
+  ylab("Mean Final Size (mm)") +
+  theme(strip.background = element_blank()) +
+  guides(shape = guide_legend("Generation"),
+         color = FALSE)
+```
+
+Using DESeq2 to figure out which taxa are different in the final and first generations of CTRL and AB.
+```{r deseq, warning=FALSE, error=FALSE}
+# Function to generate geometric means
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+
+# Function to retrieve DESeq2 results
+get_deseq_results <- function(deseq_obj, alpha, ps_obj) {
+  deseq_sf_obj <- estimateSizeFactors(deseq_obj, geoMeans = apply(counts(deseq_obj), 1, gm_mean))
+  deseq_output <- DESeq(deseq_sf_obj, fitType = "local")
+  deseq_res <- results(deseq_output)
+  significant_res <- deseq_res[which(deseq_res$padj < alpha),]
+  deseq_diff <- cbind(as(significant_res, "data.frame"),
+                      as(tax_table(ps_obj)[rownames(significant_res),], "matrix"))
+  return(deseq_diff)
+}
+
+# Subsetting and converting CTRL and AB data
+ctrl_deseq <- phyloseq_to_deseq2(subset_samples(microbiome_named, treatment == "C1" | treatment == "C5"), ~ treatment)
+ab_deseq <- phyloseq_to_deseq2(subset_samples(microbiome_named, treatment == "A1" | treatment == "A5"), ~ treatment)
+
+# Getting DESeq results
+ctrl_deseq_res <- get_deseq_results(ctrl_deseq, 0.01, microbiome_named) %>%
+  rownames_to_column(var = "asv") %>%
+  arrange(desc(log2FoldChange)) %>%
+  mutate(polished_genus = ifelse(!is.na(Genus),
+                                 paste0(Genus, "(", asv, ")"),
+                                 ifelse(!is.na(Family),
+                                         paste0(Family, "(", asv, ")"),
+                                        ifelse(!is.na(Order),
+                                               paste0(Order, "(", asv, ")"),
+                                              paste0(Class, "(", asv, ")")))))
+ab_deseq_res <- get_deseq_results(ab_deseq, 0.01, microbiome_named) %>%
+  rownames_to_column(var = "asv") %>%
+  arrange(desc(log2FoldChange)) %>%
+  mutate(polished_genus = ifelse(!is.na(Genus),
+                                 paste0(Genus, "(", asv, ")"),
+                                 ifelse(!is.na(Family),
+                                         paste0(Family, "(", asv, ")"),
+                                        ifelse(!is.na(Order),
+                                               paste0(Order, "(", asv, ")"),
+                                              paste0(Class, "(", asv, ")")))))
+
+# Saving tables
+write.csv(ctrl_deseq_res, here("statistics", "c5_c1_deseq.csv"))
+write.csv(ab_deseq_res, here("statistics", "a5_a1_deseq.csv"))
+
+# Reordering factor levels for plot arrangement
+ctrl_deseq_res$polished_genus <- factor(ctrl_deseq_res$polished_genus, levels = as.list(ctrl_deseq_res$polished_genus))
+ab_deseq_res$polished_genus <- factor(ab_deseq_res$polished_genus, levels = as.list(ab_deseq_res$polished_genus))
+# Making figures
+ctrl_deseq_plot <- ggplot(ctrl_deseq_res, aes(log2FoldChange, polished_genus, color = Class)) +
+  geom_vline(xintercept = 0, color = "gray", size = 0.5, linetype = 2) +
+  geom_point(size = 4) +
+  scale_color_manual(values = class_colors) +
+  labs(x=expression(Log[2]*" Fold Change")) +
+  theme(axis.title.y = element_blank())
+
+ab_deseq_plot <- ggplot(ab_deseq_res, aes(log2FoldChange, polished_genus, color = Class)) +
+  geom_vline(xintercept = 0, color = "gray", size = 0.5, linetype = 2) +
+  geom_point(size = 4) +
+  scale_color_manual(values = class_colors) +
+  labs(x=expression(Log[2]*" Fold Change")) +
+  theme(axis.title.y = element_blank())
+```
+
+# Part 3: Constructing figures for the manuscript
+
+Before anything else, saving supplementary figures to the figures directory. It seems as if the arrows don't save correctly, so those will have to be fixed after the fact in Illustrator.
+```{r saving figures, warning=FALSE, error=FALSE, message=FALSE}
+ggsave(here("figures", "supplementary_figure_one.pdf"), size_by_treatment_plot,
+       units = "in", height = 6, width = 6, dpi = 300, useDingbats = FALSE)
+ggsave(here("figures", "supplementary_figure_two.pdf"), cum_repro_by_treatment_plot,
+       units = "in", height = 6, width = 6, dpi = 300, useDingbats = FALSE)
+ggsave(here("figures", "supplementary_figure_three.pdf"), survival_plot,
+       units = "in", height = 6, width = 6, dpi = 300, useDingbats = FALSE)
+ggsave(here("figures", "supplementary_figure_four.pdf"), alphadiv_by_treatment_plot,
+       units = "in", height = 6, width = 6, dpi = 300, useDingbats = FALSE)
+ggsave(here("figures", "supplementary_figure_five.pdf"), asvs_by_treatment_plot,
+       units = "in", height = 6, width = 6, dpi = 300, useDingbats = FALSE)
+ggsave(here("figures", "supplementary_figure_six.pdf"), beta_ctrl_plot,
+       units = "in", height = 6, width = 6, dpi = 300, useDingbats = FALSE)
+ggsave(here("figures", "supplementary_figure_seven.pdf"), beta_ab_plot,
+       units = "in", height = 6, width = 6, dpi = 300, useDingbats = FALSE)
+
+
+
+repro_abund_cor_plot
+size_abund_cor_plot
+```
+
+Figure 1 is pre-made, and is a schematic of the experimental design.
+
+Figure 2: Microbiome composition and differentially abundant taxa in the fifth generation as compared to the first of control and antibiotics. Most of the figure labels are obscured because of the resizing of the figures, so they'll be fixed in Illustrator after.
+```{r figure two, warning=FALSE, error=FALSE, message=FALSE}
+figure_two <- plot_grid(plot_grid(NULL,
+                                  microbiome_class_composition_plot,
+                                  NULL,
+                                  labels = c("", "a", ""),
+                                  rel_widths = c(.25, 1, .25),
+                                  nrow = 1),
+                        plot_grid(ctrl_deseq_plot + theme(legend.position = "none"),
+                                  ab_deseq_plot,
+                                  nrow = 1,
+                                  labels = c("b", "c"),
+                                  rel_widths = c(.75, 1)),
+                        ncol = 1)
+
+ggsave(here("figures", "figure_two.pdf"), figure_two,
+       units = "in", height = 12, width = 12, useDingbats = FALSE)
+```
+
+
+Figure 3: Microbiome-specific metrics across generations. Most of the figure labels are obscured because of the resizing of the figures, so they'll be fixed in Illustrator after.
+```{r figure three, warning=FALSE, error=FALSE, message=FALSE}
+beta_mod <- beta_by_gen_trt_plot + theme(legend.position = "none")
+alphadiv_mod <- alphadiv_by_generation_plot + theme(legend.position = "none")
+asvs_mod <- asvs_by_generation_plot + theme(legend.position = "none")
+f3_legend <- get_legend(beta_by_gen_trt_plot + theme(legend.box = "horizontal"))
+
+figure_three <- plot_grid(plot_grid(beta_mod,
+                                    alphadiv_mod,
+                                    align = "hv",
+                                    labels = c("a", "b"),
+                                    nrow = 1),
+                          plot_grid(NULL,
+                                    asvs_mod,
+                                    f3_legend,
+                                    labels = c("", "c", NULL),
+                                    rel_widths = c(.5, 1, 1),
+                                    nrow = 1),
+                          nrow = 2,
+                          align = "hv")
+
+ggsave(here("figures", "figure_three.pdf"), figure_three,
+       units = "in", height = 8, width = 8, useDingbats = FALSE)
+```
+
+Figure 4: Life history traits across generations and how they correlate with specific taxa in the microbiome.
+```{r life history, warning=FALSE, error=FALSE, message=FALSE}
+size_mod <- size_by_generation_plot + theme(legend.position = "none")
+repro_mod <- cum_repro_by_generation_plot + theme(legend.position = "none")
+lh_legend <- get_legend(size_by_generation_plot)
+
+lh_part <- plot_grid(size_mod,
+                     repro_mod,
+                     lh_legend,
+                     labels = c("a", "b", NULL),
+                     rel_widths = c(1, 1, .25),
+                     nrow = 1,
+                     align = "hv")
+
+repro_cor_mod <- repro_abund_cor_plot + theme(legend.position = "none")
+size_cor_mod <- size_abund_cor_plot + theme(legend.position = "none")
+cor_legend <- get_legend(size_abund_cor_plot + theme(legend.position = "bottom"))
+
+correlation_part <- plot_grid(size_cor_mod,
+                              repro_cor_mod,
+                              cor_legend,
+                              nrow = 3,
+                              rel_heights = c(1, 1, .25),
+                              labels = c("c", "d", NULL))
+
+figure_four <- plot_grid(lh_part,
+                         correlation_part,
+                         nrow = 2,
+                         rel_heights = c(.66, 1))
+
+ggsave(here("figures", "figure_four.pdf"), figure_four,
+       units = "in", height = 12, width = 12, useDingbats = FALSE)
+```
+

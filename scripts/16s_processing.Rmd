@@ -1,0 +1,85 @@
+---
+title: "16s_processing"
+author: "Reilly Cooper"
+date: "1/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dada2)
+library(speedyseq)
+library(vegan)
+library(tidyverse)
+library(DECIPHER)
+library(phangorn)
+```
+
+Data locations.
+```{r datalocs}
+raw_16s_loc <- here("data", "raw_16s")
+metadata_loc <- here("data", "16s_metadata.csv")
+gtdb_loc <- here("data", "GTDB_bac120_arc122_ssu_r95_fullTaxo.fa.gz")
+```
+
+Inputting data, filtering and trimming, then outputting filtered and trimmed data to "filtered" folder.
+```{r filtering, warning=FALSE, error=FALSE}
+fnFs <- sort(list.files(raw_16s_loc, pattern = "R1_001.fastq.gz", full.names = TRUE))
+fnRs <- sort(list.files(raw_16s_loc, pattern = "R2_001.fastq.gz", full.names = TRUE))
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+
+filtFs <- file.path(here("data"), "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(here("data"), "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, trimLeft = c(17, 21), maxN = 0, maxEE = c(2,2), truncQ = 2, rm.phix = TRUE, compress = TRUE, multithread = TRUE)
+```
+
+Learning error rates and dereplicating shared sequences, then inferring ASVs.
+```{r inference, warning=FALSE, error=FALSE}
+errF <- learnErrors(filtFs, multithread = TRUE)
+errR <- learnErrors(filtRs, multithread = TRUE)
+
+derepFs <- derepFastq(filtFs, verbose=TRUE)
+derepRs <- derepFastq(filtRs, verbose=TRUE)
+names(derepFs) <- sample.names
+names(derepRs) <- sample.names
+
+dadaFs <- dada(derepFs, err = errF, multithread = TRUE)
+dadaRs <- dada(derepRs, err = errR, multithread = TRUE)
+```
+
+Creating ASV table, then assigning taxonomy and attempting to add species-level taxonomy.
+```{r asvs, warning=FALSE, error=FALSE}
+mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs, verbose = TRUE)
+seqtab <- makeSequenceTable(mergers)
+seqtab.nochim <- removeBimeraDenovo(seqtab, method = "consensus", multithread = TRUE, verbose = TRUE)
+
+taxa <- assignTaxonomy(seqtab.nochim, gtdb_loc, multithread = TRUE, tryRC = TRUE)
+```
+
+Creating phylogenetic tree.
+```{r phylogeny, warning=FALSE, error=FALSE}
+seqs <- getSequences(seqtab.nochim)
+names(seqs) <- seqs
+alignment <- AlignSeqs(DNAStringSet(seqs), anchor = NA, verbose = F)
+
+phangAlign <- phyDat(as(alignment, "matrix"), type="DNA")
+dm <- dist.ml(phangAlign)
+treeNJ <- NJ(dm) # Note, tip order != sequence order
+fit = pml(treeNJ, data=phangAlign)
+fitGTR <- update(fit, k=4, inv=0.2)
+```
+
+Loading in sample metadata, then creating phyloseq object and saving as an RDS.
+```{r phyloseq}
+metadata <- read.csv(metadata_loc)
+rownames(metadata) <- metadata[,1]
+
+ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows = FALSE),
+               sample_data(metadata),
+               tax_table(taxa),
+               phy_tree(fitGTR$tree))
+
+saveRDS(ps, here("data", "16s.rds"))
+```
+

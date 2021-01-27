@@ -37,3 +37,11 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+
+# DS Store
+.DS_Store
+
+# Large data
+data/raw_16s/
+data/filtered/
+data/GTDB_bac120_arc122_ssu_r95_fullTaxo.fa.gz

@@ -1,0 +1,633 @@
+---
+title: "Statistical analysis"
+author: "David Nguyen"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(multcomp) # for glht
+library(broom)
+library(cowplot)
+theme_set(theme_cowplot())
+```
+
+
+```{r message = FALSE}
+# read in Reilly's data
+if (file.exists("data/life_history.csv")) {
+  life_history <- read_csv("data/life_history.csv")
+} else{
+  life_history <- read_csv(url("https://raw.githubusercontent.com/reillyowencooper/daphnia_multigenerational_antibiotics/main/data/life_history.csv"))
+  write_csv(life_history, "data/life_history.csv")
+}
+
+lh_df <-
+  life_history %>% 
+  rowwise() %>%
+  mutate(total_offspring = sum(brood_one_numoffspring, brood_two_numoffspring, brood_three_numoffspring, na.rm = TRUE)) %>%
+  mutate(genf = factor(gen),
+         treatment = ifelse(treatment == "recovery", "control", treatment)) %>%
+  mutate(sequence = substr(figure_labels, 1,2),
+         sequence = ifelse(str_detect(sequence, "C"), "C", sequence),
+         sequence = ifelse(str_detect(sequence, "A"), "A", sequence),
+         sequence = factor(sequence)
+         ) 
+```
+
+
+# Cell means model for Final Size
+
+This model has a parameter for every single cell mean. That is, every sequence x generation combination for $i = 1,2,3, \ldots, 6$ sequences and $j = 0, 1, \ldots, 4$ generations. There are 20 combindations total (some combinations were not included in experimental design).
+
+$$y_{ijk} = \tau_{ij} + \epsilon_{ijk}$$
+
+* $y_{ijk}$ the final size of the $k^{th}$ daphnia in the $i^{th}$ sequence and $j^{th}$ generation
+* $\tau_{ij}$ is the mean final size of daphnia in the $i^{th}$ sequence and $j^{th}$ generation
+* $\epsilon_{ijk} \sim N(0,\sigma^2)$ is random error
+
+```{r}
+# create a col with cominations of sequence and generation
+seq_gen_levels <- c(paste("C", ":", 0:4, sep = ""), 
+                    paste("R1", ":", 1:4, sep = ""),
+                    paste("R2", ":", 2:4, sep = ""),
+                    paste("R3", ":", 3:4, sep = ""),
+                    paste("R4", ":", 4, sep = ""),
+                    paste("A", ":", 0:4, sep = ""))
+# bod <- bod %>% mutate(seq_gen = paste(fsequence, ":", fgen, sep = ""),
+#                       seq_gen = factor(seq_gen,
+#                                        levels = seq_gen_levels))
+lh_df <- lh_df %>% mutate(seq_gen = paste(sequence, ":", gen, sep = ""),
+                      seq_gen = factor(seq_gen,
+                                       levels = seq_gen_levels))
+
+
+# fit model
+# mod.size <- lm(final_size ~ seq_gen - 1, data = bod)
+mod.size <- lm(final_size ~ seq_gen - 1, data = lh_df)
+summary(mod.size)
+```
+```{r}
+# tidy(mod.size) %>% mutate(term = str_remove(term, "seq_gen")) %>% knitr::kable()
+# glance(mod.size)
+```
+
+
+# Model fit
+
+```{r}
+aug.size <-
+  augment(mod.size, se_fit = TRUE) %>%
+  mutate(width = qnorm(0.975)*sqrt(.se.fit),
+         lwr = .fitted - width,
+         upr = .fitted + width)
+aug.size <- aug.size %>% inner_join(lh_df)
+
+aug.size %>%
+  ggplot() +
+  geom_jitter(aes(x = gen, y = final_size), alpha = 0.3) +
+  geom_point(aes(x = gen, y = .fitted), size = 2) +
+  geom_errorbar(aes(x = gen, ymin = lwr, ymax = upr), width = 0) +
+  facet_wrap(~sequence) +
+  labs(y = "Final size in mm (95% CI)",
+       x = "Generation")
+```
+
+Estimated cell means and 95% Wald confidence intervals unadjusted for family-wise error.
+
+# Contrasts
+
+```{r}
+# get unique rows of model matrix
+cells <- model.matrix(mod.size) %>% unique()
+colnames(cells) <- colnames(cells) %>% str_remove(pattern = "seq_gen")
+
+# name each row so we can reference it according to seq X gen combinations
+# rownames(cells) <- names(actual_combos)
+
+cell_rownames <- vector("character", length = nrow(cells))
+for ( i in seq_along(cell_rownames)) {
+  cell_rownames[i] <- colnames(cells)[cells[i,] == 1]
+}
+
+# clean up names
+# colnames(cells) <- colnames(cells) %>% str_remove(pattern = "seq_gen")
+rownames(cells) <- cell_rownames # colnames(cells)
+
+# check that indexing is consistent with model coef order
+# ((names(coef(mod.size)) %>% str_remove(pattern = "seq_gen")) == colnames(cells)) %>% sum() == length(coef(mod.size))
+```
+
+```{r}
+# try using emmeans package
+library(emmeans)
+em.size <- emmeans(mod.size, "seq_gen")
+em.sizedf <- data.frame(em.size)
+```
+
+```{r eval = FALSE}
+# compare emmeans to observed cell means
+# they are equal???
+obs_mean <- bod %>% group_by(seq_gen) %>% summarise(cell_mean = mean(final_size, na.rm = TRUE)) 
+inner_join(em.sizedf, obs_mean) %>% transmute(diff = near(emmean, cell_mean))
+```
+
+### Compare mean body size among sequences to control within each generation
+
+```{r}
+# put K into a list since ethat is what emmeans::contrast needs to specify linear hypothesis
+contrast_list_in_gen <- list(cells["C:0",] - cells["A:0",],
+           cells["C:1",] - cells["R1:1",],
+           cells["C:1",] - cells["A:1",],
+           cells["C:2",] - cells["R1:2",],
+           cells["C:2",] - cells["R2:2",],
+           cells["C:2",] - cells["A:2",],
+           cells["C:3",] - cells["R1:3",],
+           cells["C:3",] - cells["R2:3",],
+           cells["C:3",] - cells["R3:3",],
+           cells["C:3",] - cells["A:3",],
+           cells["C:4",] - cells["R1:4",],
+           cells["C:4",] - cells["R2:4",],
+           cells["C:4",] - cells["R3:4",],
+           cells["C:4",] - cells["R4:4",],
+           cells["C:4",] - cells["A:4",])
+hypothesis_names <- c("Generation 0: C - A",
+                      "Generation 1: C - R1", "Generation 1: C - A",
+                      "Generation 2: C - R1", "Generation 2: C - R2", "Generation 2: C - A",
+                      "Generation 3: C - R1", "Generation 3: C - R2", "Generation 3: C - R3", "Generation 3: C - A",
+                      "Generation 4: C - R1", "Generation 4: C - R2", "Generation 4: C - R3", "Generation 4: C - R4", 
+                      "Generation 4: C - A")
+names(contrast_list_in_gen) <- hypothesis_names
+
+# get contrasts using mvt adjustment
+LF_in_gen <- contrast(em.size, 
+               contrast_list_in_gen,
+               adjust = "mvt")
+# save estimate, CI, and p.value
+sum_in_gen <- summary(LF_in_gen) %>% data.frame()
+contr_in_gen <- confint(LF_in_gen) %>% data.frame()
+contr_in_gen <- contr_in_gen %>% add_column(p.value = sum_in_gen$p.value)
+
+# shorten contrast name, make a col for generation
+contr_in_gen <-
+  contr_in_gen %>% 
+  separate(contrast, into = c("generation", "contrast_name"), sep = ":", remove = FALSE) %>% 
+  mutate(generation = str_remove(generation, "Generation "),
+         generation = factor(generation))
+```
+
+```{r}
+contr_in_gen %>%
+  ggplot() +
+  geom_hline(yintercept = 0, col = "red", linetype = "dashed") +
+  geom_point(aes(x = contrast, y = estimate, col = generation), size = 2) +
+  geom_errorbar(aes(x = contrast, ymin = lower.CL, ymax = upper.CL, col = generation)) +
+  scale_x_discrete(labels=contr_in_gen$contrast_name) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(x = "Comparison",
+       y = "Difference in body size (mm)")
+```
+
+### Compare difference in body size over the course of the experiment
+
+```{r}
+# put K into a list since ethat is what emmeans::contrast needs to specify linear hypothesis
+contrast_list_time <- list("C: gen 0 - gen 4" = cells["C:0",] - cells["C:4",],
+                      "A: gen 0 - gen 4" = cells["A:0",] - cells["A:4",],
+                      "gen 0 - gen 4: C - A" = (cells["C:0",] - cells["C:4",]) - (cells["A:0",] - cells["A:4",]))
+
+LF_time <- contrast(em.size, 
+               contrast_list_time,
+               adjust = "mvt")
+sum_time <- summary(LF_time) %>% data.frame()
+contr_time <- confint(LF_time) %>% data.frame()
+contr_time <- contr_time %>% add_column(p.value = sum_time$p.value)
+```
+
+```{r}
+contr_time %>%
+  ggplot() +
+   geom_hline(yintercept = 0, col = "red", linetype = "dashed") +
+  geom_point(aes(x = contrast, y = estimate), size = 2) + 
+  geom_errorbar(aes(x = contrast, ymin = lower.CL, ymax = upper.CL), width = 0) +
+  labs(y = "difference in body size (mm)")
+```
+### Compare the mean body size at first recovery time by number of generations exposed to antibiotics
+
+```{r}
+contrast_list_first_recovery <- 
+  list("R1 - R2" = cells["R1:1",] - cells["R2:2",],
+       "R1 - R3" = cells["R1:1",] - cells["R3:3",],
+       "R1 - R4" = cells["R1:1",] - cells["R4:4",],
+       "R2 - R3" = cells["R2:2",] - cells["R3:3",],
+       "R2 - R4" = cells["R2:2",] - cells["R4:4",],
+       "R3 - R4" = cells["R3:3",] - cells["R4:4",])
+
+LF_first_recovery <- contrast(em.size,
+                              contrast_list_first_recovery,
+                              adjust = "mvt")
+sum_first_recovery <- summary(LF_first_recovery) %>% data.frame()
+first_recovery <- confint(LF_first_recovery) %>% data.frame()
+
+first_recovery <- first_recovery %>% add_column(p.value = sum_first_recovery$p.value)
+
+first_recovery %>%
+  ggplot() +
+   geom_hline(yintercept = 0, col = "red", linetype = "dashed") +
+  geom_point(aes(x = contrast, y = estimate), size = 2) + 
+  geom_errorbar(aes(x = contrast, ymin = lower.CL, ymax = upper.CL), width = 0) +
+  labs(y = "difference in body size (mm)")
+```
+
+
+### Model Checking
+
+```{r}
+# model checking
+plot(mod.size)
+```
+
+Everything looks good.
+
+# Cumulative reproduction analysis
+
+```{r }
+mod.repro <- lm(total_offspring ~ seq_gen - 1, data = lh_df)
+summary(mod.repro)
+```
+
+```{r}
+plot(mod.repro)
+```
+
+Definitely some heteroscedasticity. The variance seems to increase with the mean. Poisson would be better.
+
+```{r}
+aug.repro <- augment(mod.repro, se_fit = TRUE) %>% 
+  mutate(width = qnorm(0.975)*sqrt(.se.fit),
+         lwr = .fitted - width,
+         upr = .fitted + width)
+aug.repro <- aug.repro %>% inner_join(lh_df)
+
+aug.repro %>%
+  ggplot() +
+  geom_jitter(aes(x = gen, y = total_offspring), alpha = 0.3) +
+  geom_point(aes(x = gen, y = .fitted), size = 2) +
+  geom_errorbar(aes(x = gen, ymin = lwr, ymax = upr), width = 0) +
+  facet_wrap(~sequence) +
+  labs(title = "Model assuming normally distributed responses",
+       y = "Cumulative offspring (95% CI)",
+       x = "Generation")
+```
+
+The confidence intervals (95% Wald CI) are waaaay too small. This means the probability of rejecting null hypotheses will be much bigger than intended. Not a great model. Really think I should use count data model.
+
+```{r}
+mean_var <-
+  lh_df %>%
+  group_by(sequence, gen) %>%
+  transmute(mean_offspring = mean(total_offspring),
+         var_offspring = var(total_offspring)) %>%
+  slice(1)
+
+varmean.nb <- lm(var_offspring ~ I(mean_offspring^2) - 1, data = mean_var)
+varmean.qp <- lm(var_offspring ~ mean_offspring - 1, data = mean_var)
+nd_offspring <- data.frame(mean_offspring = seq(0, 85, by = 1))
+nd_offspring$pred_nb <- predict(varmean.nb, newdata = nd_offspring)
+nd_offspring$pred_qp <- predict(varmean.qp, newdata = nd_offspring)
+
+ggplot() +
+  geom_point(data = mean_var, mapping = aes(x = mean_offspring, y = var_offspring)) +
+  geom_line(data = nd_offspring, mapping = aes(x = mean_offspring, y = pred_nb)) +
+  geom_line(data = nd_offspring, mapping = aes(x = mean_offspring, y = pred_qp)) +
+  geom_abline(slope = 1) +
+  ylim(0,85) + xlim(0,85)
+```
+
+Here, I've plotted the sequence x generation specific mean and variance in offspring along with a x = y line. The variance is always greater than the mean so this suggests I will need to use negative binomial or quasipoisson regression. Negative binomial regression would imply variance is a function of the square of the mean and quasipoisson allows variance to be a linear function of the mean. Either one seems ok. I will need to actually fit these models and compare them.
+
+I think there are two possible strategies here:
+
+1. Fit count data models. May need to fit binary response model (reproduce or not reproduce) and another model for number of offspring (given that you reproduced, how many babies did you have?)
+2. Calculate the per-capita growth rate (r) for the daphnia, which would take both survival and reproduction into account, and model how r depends on the treatment and generation.
+
+I think the 2^nd^ option makes the most sense if you want to make statements about how the treatments impact fitness, since it is a direct measurement of fitness. Although, I'm not sure if it makes sense to calculate r for individual daphnia. But, i think alaina says that she has done it and has a spreadsheet to do so.
+
+Just how many Daphnia didn't have offspring?
+
+```{r}
+# individuals with no offspring
+none_df <- lh_df %>%
+    group_by(seq_gen) %>% filter(total_offspring == 0) %>%
+  dplyr::select(gen, treatment, final_survival_day, final_size,
+                brood_one_numoffspring, brood_two_numoffspring, brood_three_numoffspring, total_offspring)
+```
+
+number of daphnia that had no babies
+```{r}
+lh_df %>%
+  group_by(seq_gen) %>% filter(total_offspring == 0) %>%
+  summarise(no_babies = n()) %>% knitr::kable()
+```
+
+number of daphnia that survived to 21 days and had no babies
+```{r}
+lh_df %>%
+  group_by(seq_gen) %>% filter(total_offspring == 0, !is.na(final_size)) %>%
+  summarise(no_babies = n()) %>% knitr::kable()
+
+```
+
+Total offspring by final survival day
+
+```{r}
+lh_df %>%
+  ggplot() +
+  geom_jitter(aes(x = final_survival_day, y =total_offspring), alpha = 0.5) +
+  geom_hline(yintercept = 0, col = "red") +
+  facet_grid(sequence~gen)
+```
+
+Whats up with the A:4 individual that had 20 babies and died at 1 day old?
+
+```{r}
+lh_df %>% filter(sequence == "A", total_offspring > 10, final_survival_day < 10) %>%
+    dplyr::select(gen, treatment, final_survival_day, final_size,
+                brood_one_numoffspring, brood_two_numoffspring, brood_three_numoffspring, total_offspring) %>%
+  knitr::kable()
+```
+
+Yeah, there is definitily a data entry error here. It looks like there are two records where the day of first brood is greater than the final survival day. They were probably swapped on accident.
+
+```{r}
+lh_df %>% filter(brood_one_day > final_survival_day) %>% 
+  dplyr::select(gen, treatment, individual, final_survival_day, brood_one_day) %>% 
+  knitr::kable()
+```
+
+
+```{r echo = FALSE}
+knitr::knit_exit()
+```
+
+# contrasts using multcomp::glht
+```{r}
+# function to convert glht object to data.frame
+# https://gist.github.com/cheuerde/3acc1879dc397a1adfb0
+# Claas Heuer, September 2015
+glht.table <- function(x) {
+
+# I took this from somewehre, but cant remember the source (probably SO))
+  pq <- summary(x)$test
+  mtests <- cbind(pq$coefficients, pq$sigma, pq$tstat, pq$pvalues)
+  error <- attr(pq$pvalues, "error")
+  pname <- switch(x$alternativ, less = paste("Pr(<", ifelse(x$df ==0, "z", "t"), ")", sep = ""), 
+  greater = paste("Pr(>", ifelse(x$df == 0, "z", "t"), ")", sep = ""), two.sided = paste("Pr(>|",ifelse(x$df == 0, "z", "t"), "|)", sep = ""))
+  colnames(mtests) <- c("Estimate", "Std. Error", ifelse(x$df ==0, "z value", "t value"), pname)
+  return(mtests)
+
+}
+
+# create contrast matrix: C - (other sequence) within all generations
+K <- rbind(cells["C:0",] - cells["A:0",],
+           cells["C:1",] - cells["R1:1",],
+           cells["C:1",] - cells["A:1",],
+           cells["C:2",] - cells["R1:2",],
+           cells["C:2",] - cells["R2:2",],
+           cells["C:2",] - cells["A:2",],
+           cells["C:3",] - cells["R1:3",],
+           cells["C:3",] - cells["R2:3",],
+           cells["C:3",] - cells["R3:3",],
+           cells["C:3",] - cells["A:3",],
+           cells["C:4",] - cells["R1:4",],
+           cells["C:4",] - cells["R2:4",],
+           cells["C:4",] - cells["R3:4",],
+           cells["C:4",] - cells["R4:4",],
+           cells["C:4",] - cells["A:4",]
+           )
+# Labels for hypothesis test
+hypothesis_names <- c("Generation 0: C - A",
+                      "Generation 1: C - R1", "Generation 1: C - A",
+                      "Generation 2: C - R1", "Generation 2: C - R2", "Generation 2: C - A",
+                      "Generation 3: C - R1", "Generation 3: C - R2", "Generation 3: C - R3", "Generation 3: C - A",
+                      "Generation 4: C - R1", "Generation 4: C - R2", "Generation 4: C - R3", "Generation 4: C - R4", 
+                      "Generation 4: C - A")
+
+rownames(K) <- hypothesis_names
+
+# run all hypothesis tests
+size.ht <- glht(mod.size, linfct = K)
+```
+
+```{r}
+ci.size <- confint(size.ht)$confint %>% data.frame()
+p.size <- glht.table(size.ht) %>% data.frame() 
+
+hypoth.df <- inner_join(p.size, ci.size, by = "Estimate") %>% mutate(test = hypothesis_names) %>% relocate(test)
+hypoth.df %>%  knitr::kable()
+```
+
+```{r}
+hypoth.df %>%
+  ggplot(aes(x = test)) +
+  geom_point(aes(y = Estimate)) +
+  geom_errorbar(aes(ymin = lwr, ymax = upr)) +
+  geom_hline(yintercept = 0, col = "red", linetype = "dashed") +
+#  scale_x_discrete(limits = rev(levels(seq_gen_levels))) +
+  coord_flip() +
+  labs(title = "Difference in final body size within each generation",
+       subtitle = "Control is reference",
+       x = "",
+       y = "Estimated difference (95% family-wise CI)") +
+  theme_bw()
+```
+
+```{r eval = FALSE, echo = FALSE}
+# get unique rows of model matrix
+# includes all seq:gen (even those missing in experiment)
+cells <- model.matrix(mod.size) %>% unique()
+
+# get names of actual seq X gen combinations
+all_combos <- apply(cells, 2, sum)
+actual_combos <- all_combos[all_combos == 1]
+
+# name each row so we can reference it according to seq X gen combinations
+rownames(cells) <- names(actual_combos)
+
+# notation: sequence.generation
+# Control - (not control) for each generation
+K <-
+rbind(cells["fsequenceC:fgen0",] - cells["fsequenceA:fgen0",], # C.0 - A.0
+      cells["fsequenceC:fgen1",] - cells["fsequenceR1:fgen1",], # C.1 - R1.1
+      cells["fsequenceC:fgen1",] - cells["fsequenceA:fgen1",], # C.1 - A.1
+      cells["fsequenceC:fgen2",] - cells["fsequenceR1:fgen2",], # C.2 - R1.2
+      cells["fsequenceC:fgen2",] - cells["fsequenceR2:fgen2",], # C.2 - R2.2
+      cells["fsequenceC:fgen2",] - cells["fsequenceA:fgen2",],  # C.2 - A.2
+      cells["fsequenceC:fgen3",] - cells["fsequenceR1:fgen3",], # C.3 - R1.3
+      cells["fsequenceC:fgen3",] - cells["fsequenceR2:fgen3",], # C.3 - R2.3
+      cells["fsequenceC:fgen3",] - cells["fsequenceR3:fgen3",], # C.3 - R3.3
+      cells["fsequenceC:fgen3",] - cells["fsequenceA:fgen3",],  # C.3 - A.3
+      cells["fsequenceC:fgen4",] - cells["fsequenceR1:fgen4",], # C.4 - R1.4
+      cells["fsequenceC:fgen4",] - cells["fsequenceR2:fgen4",], # C.4 - R2.4
+      cells["fsequenceC:fgen4",] - cells["fsequenceR3:fgen4",], # C.4 - R3.4
+      cells["fsequenceC:fgen4",] - cells["fsequenceR4:fgen4",], # C.4 - R4.4
+      cells["fsequenceC:fgen4",] - cells["fsequenceA:fgen4",])  # C.4 - A.4
+
+# remove cols that don't actually exist in experiment
+K <- K[, colnames(K) %in% names(actual_combos)]
+
+# check that K is correct
+apply(K, 1, sum) == 0 # contrasts should sum to zero
+
+size.ht <- glht(mod.size, linfct = K)
+```
+
+```{r eval = FALSE}
+# note there is some missing data
+bod %>% group_by(sequence, gen) %>% summarise(n())
+
+# missing response
+bod %>% group_by(sequence, gen) %>% filter(is.na(final_size)) %>% summarise(n())
+
+# check out number of obs for each carryover parameter
+bod %>% group_by(carryover) %>% summarise(n())
+```
+
+```{r}
+bod %>% ggplot(aes(x = fgen, y = final_size)) + geom_jitter(alpha=0.5) + facet_wrap(~sequence)
+```
+
+
+```{r}
+# fit fixed effects model
+mod1 <- lm(final_size ~ #-1 +
+            ftreatment*fgen,
+          data = bod)
+bod$carryover <- factor(bod$carryover)
+contrasts(bod$carryover) <- contr.sum
+# contrasts(bod$ftreatment) <- contr.sum
+
+mod2 <- lm(final_size ~ -1 +
+            fcarryover +
+            ftreatment*fgen, 
+          data = bod)
+
+lm(final_size ~ fcarryover + ftreatment*fgen, data = bod)
+model.matrix(~ ftreatment*fgen + carryover, data = bod) %>% mgcv::uniquecombs() %>% View()
+
+bod <- drop_na(bod) # WRONG. drops all gen == 0, because carryover == NA
+bod <- bod %>% filter(!is.na(final_size)) # doesn't drop NA in carryover
+
+X <- model.matrix(~ ftreatment*fgen + carryover - 1, data = bod)
+#X %>% mgcv::uniquecombs() %>% View()
+lsbeta <- MASS::ginv(t(X) %*% X) %*% t(X) %*% # matrix operations drop NAs, so all gen0 is lost since carryover NA
+  as.matrix(bod[,"final_size",drop = FALSE])
+names(lsbeta) <- colnames(X)
+lsbeta["ftreatmentcontrol"] + lsbeta["fgen1"]
+# summary(mod1)
+summary(mod2)
+# model.matrix(mod2) %>% as.tibble() %>% distinct() %>% View()
+# car::Anova(mod1, type = 3)
+car::Anova(mod2, type = 3)
+```
+
+Is it appropriate to set gen0 carryover as C for both Control and ab sequences, since they each come from a "control" source population?
+
+```{r}
+aovmod <- aov(final_size ~ genf*treatment, data = bod)
+summary(aovmod)
+coef(aovmod)
+TukeyHSD(aovmod)
+```
+
+
+```{r}
+# residual diagnostics
+plot(mod2)
+```
+
+```{r}
+aug <- augment(mod2)
+inner_join(bod, aug) %>%
+  ggplot() +
+  geom_jitter(aes(x = fgen, y = final_size), alpha = 0.5) +
+  geom_point(aes(x = fgen, y = .fitted), size = 2, col = "red") + facet_wrap(~fsequence)
+```
+
+```{r}
+# cell means model
+mod.cm <- lm(final_size ~ fsequence:fgen - 1, data = bod)
+summary(mod.cm)
+```
+
+Estimates a parameter for every sequence x generation group (20 total).
+
+```{r message = FALSE, eval = FALSE, echo = FALSE}
+# read in and format data for analysis
+if (file.exists("data/bod.csv")){
+  bod <- read.csv("data/bod.csv") %>%
+    mutate(fgen = factor(gen),
+           fsequence = factor(sequence, levels = c("C", "R1", "R2", "R3", "R4", "A")),
+           ftreatment = factor(treatment, levels = c("control","antibiotic")),
+           fcarryover = factor(carryover, levels = c("C", "A")))
+} else { # if file not found read in raw data and process
+  # read in Reilly's data
+life_history <- read_csv(url("https://raw.githubusercontent.com/reillyowencooper/daphnia_multigenerational_antibiotics/main/data/life_history.csv"))
+
+# select body size data
+bod <- 
+  life_history %>% 
+  select(gen, treatment, individual, final_size, gen_in_control, gen_in_antibiotics, figure_labels) %>%
+  mutate(genf = factor(gen),
+         treatment = ifelse(treatment == "recovery", "control", treatment))
+
+# create "sequence" to ID each unique sequence
+bod <- 
+  bod %>%
+  mutate(sequence = substr(figure_labels, 1,2),
+         sequence = ifelse(str_detect(sequence, "C"), "C", sequence),
+         sequence = ifelse(str_detect(sequence, "A"), "A", sequence),
+         sequence = factor(sequence)
+         ) 
+# create "carryover" covariate to specify the previous treatment
+bod <-
+  bod %>% 
+  group_by(gen, sequence) %>%
+  # mutate(carryover = case_when( (sequence == "A" & gen > 0) ~ "A",
+  #                               (sequence == "C" & gen > 0) ~ "C",
+  #                               (str_extract(sequence, "\\d") == gen) ~ "A",
+  #                               (str_extract(sequence, "\\d") != gen) ~ "C"
+  #                              ))
+  mutate(carryover = case_when( (sequence == "A" & gen > 0) ~ "A",
+                                (sequence == "C" & gen > 0) ~ "C",
+                                (str_extract(sequence, "\\d") == gen) ~ "A",
+                                (str_extract(sequence, "\\d") != gen) ~ "C",
+                                gen == 0 ~ "C"
+                               ))
+# save csv
+write_csv(bod, "data/bod.csv")
+
+# format bod for analysis in SAS
+# bod <- drop_na(bod)
+bod %>% 
+  select(gen, treatment, individual, sequence, 
+         carryover, final_size) %>%
+  # mutate(sequence = case_when(sequence == "C" ~ "C",
+  #                             sequence == "R1" ~ "Rone",
+  #                             sequence == "R2" ~ "Rtwo",
+  #                             sequence == "R3" ~ "Rthr",
+  #                             sequence == "R4" ~ "Rfou",
+  #                             sequence == "A" ~ "A")) %>%
+  mutate(sequence = case_when(sequence == "C" ~ 1,
+                              sequence == "R1" ~ 2,
+                              sequence == "R2" ~ 3,
+                              sequence == "R3" ~ 4,
+                              sequence == "R4" ~ 5,
+                              sequence == "A" ~ 6)) %>%
+  write_csv("data/bod_sas.csv")
+}
+```

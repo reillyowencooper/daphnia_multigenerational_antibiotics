@@ -258,92 +258,32 @@ Everything looks good.
 
 # Cumulative reproduction analysis
 
-```{r }
-mod.repro <- lm(total_offspring ~ seq_gen - 1, data = lh_df)
-summary(mod.repro)
-```
-
 ```{r}
-plot(mod.repro)
-```
-
-Definitely some heteroscedasticity. The variance seems to increase with the mean. Poisson would be better.
-
-```{r}
-aug.repro <- augment(mod.repro, se_fit = TRUE) %>% 
-  mutate(width = qnorm(0.975)*sqrt(.se.fit),
-         lwr = .fitted - width,
-         upr = .fitted + width)
-aug.repro <- aug.repro %>% inner_join(lh_df)
-
-aug.repro %>%
-  ggplot() +
-  geom_jitter(aes(x = gen, y = total_offspring), alpha = 0.3) +
-  geom_point(aes(x = gen, y = .fitted), size = 2) +
-  geom_errorbar(aes(x = gen, ymin = lwr, ymax = upr), width = 0) +
-  facet_wrap(~sequence) +
-  labs(title = "Model assuming normally distributed responses",
-       y = "Cumulative offspring (95% CI)",
-       x = "Generation")
-```
-
-The confidence intervals (95% Wald CI) are waaaay too small. This means the probability of rejecting null hypotheses will be much bigger than intended. Not a great model. Really think I should use count data model.
-
-```{r}
-mean_var <-
-  lh_df %>%
+zeros_df <-
+  lh_df %>% 
+  rowwise() %>%
+  mutate(no_offspring = (total_offspring == 0)) %>%
+  # filter(total_offspring == 0) %>%
   group_by(sequence, gen) %>%
-  transmute(mean_offspring = mean(total_offspring),
-         var_offspring = var(total_offspring)) %>%
-  slice(1)
+  summarise(zeros = sum(no_offspring)) %>%
+  pivot_wider(names_from = "gen", values_from = "zeros")
 
-varmean.nb <- lm(var_offspring ~ I(mean_offspring^2) - 1, data = mean_var)
-varmean.qp <- lm(var_offspring ~ mean_offspring - 1, data = mean_var)
-nd_offspring <- data.frame(mean_offspring = seq(0, 85, by = 1))
-nd_offspring$pred_nb <- predict(varmean.nb, newdata = nd_offspring)
-nd_offspring$pred_qp <- predict(varmean.qp, newdata = nd_offspring)
+c.total <- data.frame(sequence = "total",
+           t(apply(zeros_df[,-1], 2, sum, na.rm = TRUE))) # gen totals
+names(c.total) <- c("sequence",0:4)
+total_zeros <- sum(c.total[-1])
 
-ggplot() +
-  geom_point(data = mean_var, mapping = aes(x = mean_offspring, y = var_offspring)) +
-  geom_line(data = nd_offspring, mapping = aes(x = mean_offspring, y = pred_nb)) +
-  geom_line(data = nd_offspring, mapping = aes(x = mean_offspring, y = pred_qp)) +
-  geom_abline(slope = 1) +
-  ylim(0,85) + xlim(0,85)
+r.total <- data.frame(total = c(apply(zeros_df[,-1], 1, sum, na.rm = TRUE), # sequence totals
+                                total_zeros)) # total zeros over gen and sequence
+# check total zeros
+sum(r.total[-nrow(r.total),]) == total_zeros # they are the same
+
+zeros_table <- zeros_df %>% ungroup() %>% add_row(c.total) %>% add_column(r.total)
+
+options(knitr.kable.NA = '*')
+zeros_table %>% knitr::kable()
 ```
 
-Here, I've plotted the sequence x generation specific mean and variance in offspring along with a x = y line. The variance is always greater than the mean so this suggests I will need to use negative binomial or quasipoisson regression. Negative binomial regression would imply variance is a function of the square of the mean and quasipoisson allows variance to be a linear function of the mean. Either one seems ok. I will need to actually fit these models and compare them.
-
-I think there are two possible strategies here:
-
-1. Fit count data models. May need to fit binary response model (reproduce or not reproduce) and another model for number of offspring (given that you reproduced, how many babies did you have?)
-2. Calculate the per-capita growth rate (r) for the daphnia, which would take both survival and reproduction into account, and model how r depends on the treatment and generation.
-
-I think the 2^nd^ option makes the most sense if you want to make statements about how the treatments impact fitness, since it is a direct measurement of fitness. Although, I'm not sure if it makes sense to calculate r for individual daphnia. But, i think alaina says that she has done it and has a spreadsheet to do so.
-
-Just how many Daphnia didn't have offspring?
-
-```{r}
-# individuals with no offspring
-none_df <- lh_df %>%
-    group_by(seq_gen) %>% filter(total_offspring == 0) %>%
-  dplyr::select(gen, treatment, final_survival_day, final_size,
-                brood_one_numoffspring, brood_two_numoffspring, brood_three_numoffspring, total_offspring)
-```
-
-number of daphnia that had no babies
-```{r}
-lh_df %>%
-  group_by(seq_gen) %>% filter(total_offspring == 0) %>%
-  summarise(no_babies = n()) %>% knitr::kable()
-```
-
-number of daphnia that survived to 21 days and had no babies
-```{r}
-lh_df %>%
-  group_by(seq_gen) %>% filter(total_offspring == 0, !is.na(final_size)) %>%
-  summarise(no_babies = n()) %>% knitr::kable()
-
-```
 
 Total offspring by final survival day
 

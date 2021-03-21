@@ -13,21 +13,24 @@ library(tidyverse)
 library(multcomp) # for glht
 library(broom)
 library(cowplot)
+library(here)
 theme_set(theme_cowplot())
 ```
 
 
 ```{r message = FALSE}
-# read in Reilly's data
-if (file.exists("data/life_history.csv")) {
-  life_history <- read_csv("data/life_history.csv")
-} else{
-  life_history <- read_csv(url("https://raw.githubusercontent.com/reillyowencooper/daphnia_multigenerational_antibiotics/main/data/life_history.csv"))
-  write_csv(life_history, "data/life_history.csv")
-}
+life_history_loc <- here("data", "life_history.csv")
+life_history <- read_csv(life_history_loc)
+# # read in Reilly's data
+# if (file.exists("data/life_history.csv")) {
+#   life_history <- read_csv("data/life_history.csv")
+# } else{
+#   life_history <- read_csv(url("https://raw.githubusercontent.com/reillyowencooper/daphnia_multigenerational_antibiotics/main/data/life_history.csv"))
+#   write_csv(life_history, "data/life_history.csv")
+# }
 
 lh_df <-
-  life_history %>% 
+  life_history %>%
   rowwise() %>%
   mutate(total_offspring = sum(brood_one_numoffspring, brood_two_numoffspring, brood_three_numoffspring, na.rm = TRUE)) %>%
   mutate(genf = factor(gen),
@@ -36,7 +39,7 @@ lh_df <-
          sequence = ifelse(str_detect(sequence, "C"), "C", sequence),
          sequence = ifelse(str_detect(sequence, "A"), "A", sequence),
          sequence = factor(sequence)
-         ) 
+         )
 ```
 
 

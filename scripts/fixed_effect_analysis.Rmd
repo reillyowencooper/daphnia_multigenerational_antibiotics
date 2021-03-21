@@ -14,6 +14,7 @@ library(multcomp) # for glht
 library(broom)
 library(cowplot)
 library(here)
+library(pscl) # for hurdle models
 theme_set(theme_cowplot())
 ```
 
@@ -102,7 +103,7 @@ aug.size %>%
 
 Estimated cell means and 95% Wald confidence intervals unadjusted for family-wise error.
 
-# Contrasts
+# Contrasts for body size analysis
 
 ```{r}
 # get unique rows of model matrix
@@ -141,7 +142,7 @@ inner_join(em.sizedf, obs_mean) %>% transmute(diff = near(emmean, cell_mean))
 
 ### Compare mean body size among sequences to control within each generation
 
-```{r}
+```{r cache=TRUE}
 # put K into a list since ethat is what emmeans::contrast needs to specify linear hypothesis
 contrast_list_in_gen <- list(cells["C:0",] - cells["A:0",],
            cells["C:1",] - cells["R1:1",],
@@ -197,7 +198,7 @@ contr_in_gen %>%
 
 ### Compare difference in body size over the course of the experiment
 
-```{r}
+```{r cache=TRUE}
 # put K into a list since ethat is what emmeans::contrast needs to specify linear hypothesis
 contrast_list_time <- list("C: gen 0 - gen 4" = cells["C:0",] - cells["C:4",],
                       "A: gen 0 - gen 4" = cells["A:0",] - cells["A:4",],
@@ -221,7 +222,7 @@ contr_time %>%
 ```
 ### Compare the mean body size at first recovery time by number of generations exposed to antibiotics
 
-```{r}
+```{r cache=TRUE}
 contrast_list_first_recovery <- 
   list("R1 - R2" = cells["R1:1",] - cells["R2:2",],
        "R1 - R3" = cells["R1:1",] - cells["R3:3",],
@@ -258,42 +259,52 @@ Everything looks good.
 
 # Cumulative reproduction analysis
 
+### Exploratory data viz
+
 ```{r}
 zeros_df <-
   lh_df %>% 
   rowwise() %>%
   mutate(no_offspring = (total_offspring == 0)) %>%
-  # filter(total_offspring == 0) %>%
   group_by(sequence, gen) %>%
-  summarise(zeros = sum(no_offspring)) %>%
+  summarise(zeros = sum(no_offspring))
+  # filter(total_offspring == 0) %>%
+zeros_table <- 
+  zeros_df %>%
   pivot_wider(names_from = "gen", values_from = "zeros")
 
 c.total <- data.frame(sequence = "total",
-           t(apply(zeros_df[,-1], 2, sum, na.rm = TRUE))) # gen totals
+           t(apply(zeros_table[,-1], 2, sum, na.rm = TRUE))) # gen totals
 names(c.total) <- c("sequence",0:4)
 total_zeros <- sum(c.total[-1])
 
-r.total <- data.frame(total = c(apply(zeros_df[,-1], 1, sum, na.rm = TRUE), # sequence totals
+r.total <- data.frame(total = c(apply(zeros_table[,-1], 1, sum, na.rm = TRUE), # sequence totals
                                 total_zeros)) # total zeros over gen and sequence
 # check total zeros
 sum(r.total[-nrow(r.total),]) == total_zeros # they are the same
 
-zeros_table <- zeros_df %>% ungroup() %>% add_row(c.total) %>% add_column(r.total)
+zeros_table <- zeros_table %>% ungroup() %>% add_row(c.total) %>% add_column(r.total)
 
 options(knitr.kable.NA = '*')
 zeros_table %>% knitr::kable()
 ```
 
-
-Total offspring by final survival day
+There are some instances where there were no zeros in a sequence x generation group. This means I can't fit a satruated logistic model for the zeros.
 
 ```{r}
 lh_df %>%
   ggplot() +
   geom_jitter(aes(x = final_survival_day, y =total_offspring), alpha = 0.5) +
   geom_hline(yintercept = 0, col = "red") +
-  facet_grid(sequence~gen)
+  facet_grid(sequence~gen) + labs(title = "Total offspring by final survival day")
 ```
+
+we can see that there are two kinds "paths" that can result in zero offspring:
+
+* Biological sterility: these are the individuals (4 in this dataset) that reached the 21 day survival endpoint but never had offspring. About 1/100 daphnia are like this.
+* Failure to survive reproductive maturation: between about 5 - 10 days of age, daphnia undergo a stressful shift in resource allocation towards reproduction. Not all daphnia survive this.
+
+If excess zeros need to be modeled, I think that a "hurdle" model is most appropriate. The hurdle would be getting passed reproductive maturation and not being sterile.
 
 Whats up with the A:4 individual that had 20 babies and died at 1 day old?
 
@@ -312,6 +323,326 @@ lh_df %>% filter(brood_one_day > final_survival_day) %>%
   knitr::kable()
 ```
 
+### Approach
+
+* Fit non zero-inflated models
+* Fit zero-inflated models
+* compare number of zeros predicted by each to see which is better
+
+```{r}
+glm_pois <- glm(total_offspring ~ seq_gen, family = poisson(link = "log"), data = lh_df)
+glm_negbin <- glm.nb(total_offspring ~ seq_gen, link = "log", data = lh_df)
+
+summary(glm_pois)
+summary(glm_negbin)
+```
+
+```{r}
+AIC(glm_pois, glm_negbin)
+```
+
+Saturated negative binomial is better than saturated poisson model.
+
+```{r}
+par(mfrow = c(2,1))
+plot(glm_pois, which = 1)
+plot(glm_negbin, which = 1)
+```
+
+```{r}
+par(mfrow = c(2,1))
+plot(glm_pois, which = 2)
+plot(glm_negbin, which = 2)
+```
+
+
+```{r}
+plot(glm_pois, which = 3)
+plot(glm_negbin, which = 3)
+```
+
+```{r}
+par(mfrow = c(2,1))
+plot(glm_pois, which = 4)
+plot(glm_negbin, which = 4)
+```
+
+Don't know how to interpret this.
+
+### Compare predicted zeros to observed zeros
+
+```{r}
+pred_df <- data.frame(seq_gen = seq_gen_levels) %>%
+  separate(col = seq_gen, into = c("sequence", "gen"), sep = ":", remove = FALSE) %>%
+  mutate(sequence = factor(sequence, levels = levels(lh_df$sequence)),
+         gen = factor(gen))
+obs_zeros_df <- 
+  zeros_df %>% mutate(seq_gen = paste(sequence, ":", gen, sep = ""),
+                      seq_gen = factor(seq_gen,
+                                       levels = seq_gen_levels)) %>% 
+             ungroup() %>%
+             dplyr::select(seq_gen, obs_zeros = zeros) 
+cell_count_df <- lh_df %>% group_by(seq_gen) %>% summarise(cell_count = n())
+pred_df <- inner_join(pred_df, cell_count_df, by = "seq_gen")
+pred_df <- inner_join(pred_df, obs_zeros_df, by = "seq_gen")
+
+pred_df$pois_mean <- predict(glm_pois, newdata = pred_df, type = "response")
+pred_df$nb_mean <- predict(glm_negbin, newdata = pred_df, type = "response")
+
+pred_df <- pred_df %>% 
+  mutate(pzero_pois = ppois(0, lambda = pois_mean),
+         pzero_nb = pnbinom(0, size = glm_negbin$theta, mu = nb_mean),
+         pred_zero_pois = cell_count*pzero_pois,
+         pred_zero_nb = cell_count*pzero_nb)
+```
+
+```{r fig.show="hold", out.width="50%"}
+#  poisson
+pred_df %>%
+  ggplot(aes(x = seq_gen)) +
+  geom_point(aes(y = obs_zeros), col = "red", size = 2, alpha = 0.5) +
+  geom_point(aes(y = pred_zero_pois), col = "blue", size = 2, alpha = 0.5) +
+  geom_segment(aes(x = seq_gen, xend = seq_gen, y = pred_zero_pois, yend = obs_zeros)) +
+  coord_flip() +
+  labs(title = "Comparing predicted and observed zeros: poisson",
+       subtitle = "observed = red, predicted = blue",
+       x = "number of daphnia with zero offspring",
+       y = "group")
+# nbinom
+pred_df %>%
+  ggplot(aes(x = seq_gen)) +
+  geom_point(aes(y = obs_zeros), col = "red", size = 2, alpha = 0.5) +
+  geom_point(aes(y = pred_zero_nb), col = "blue", size = 2, alpha = 0.5) +
+  geom_segment(aes(x = seq_gen, xend = seq_gen, y = pred_zero_nb, yend = obs_zeros)) +
+  coord_flip() +
+  labs(title = "Comparing predicted and observed zeros: negative binomial",
+       subtitle = "observed = red, predicted = blue",
+       x = "number of daphnia with zero offspring",
+       y = "group")
+```
+
+Obviously, the poisson model underestimates the number of zeros. Negative binomial does a little better but still mostly underpredicts the number of zeros.
+
+### Hurdle models
+
+```{r}
+# determine model for whether Pr( offspring > 0 )
+glm_bin <- glm(I(total_offspring > 0) ~ sequence * factor(gen), family = binomial, data = lh_df)
+summary(glm_bin)
+car::Anova(glm_bin)
+```
+
+Interaction isn't significant. But, there are tons of NA for parameter estimates due to missing combinations and over-parameterization. Ignoring this for now, I'll use the sequence and generation without interaction as covariates for the hurdle part of the model.
+
+```{r}
+hurdle_pois <-
+  hurdle(total_offspring ~ seq_gen -1 | sequence + factor(gen), 
+       dist = "poisson", zero.dist = "binomial", data = lh_df)
+hurdle_nb <-
+  hurdle(total_offspring ~ seq_gen -1 | sequence + factor(gen), 
+       dist = "negbin", zero.dist = "binomial", data = lh_df)
+
+summary(hurdle_pois)
+summary(hurdle_nb)
+```
+
+```{r}
+AIC(hurdle_pois, hurdle_nb)
+```
+
+```{r}
+pred_df$pzero_hurdle_pois <- 1 - predict(hurdle_pois, newdata = pred_df, type = "zero") # returns prob > 0?
+pred_df$pzero_hurdle_nb <- 1 - predict(hurdle_nb, newdata = pred_df, type = "zero") # returns prob > 0?
+pred_df <- pred_df %>% 
+  mutate(pred_zero_hurdle_pois = pzero_hurdle_pois*cell_count,
+         pred_zero_hurdle_nb = pzero_hurdle_nb*cell_count)
+```
+
+```{r fig.show = "hold", out.width = "50%"}
+#  poisson
+pred_df %>%
+  ggplot(aes(x = seq_gen)) +
+  geom_point(aes(y = obs_zeros), col = "red", size = 2, alpha = 0.5) +
+  geom_point(aes(y = pred_zero_hurdle_pois), col = "blue", size = 2, alpha = 0.5) +
+  geom_segment(aes(x = seq_gen, xend = seq_gen, y = pred_zero_hurdle_pois, yend = obs_zeros)) +
+  coord_flip() +
+  labs(title = "Comparing predicted and observed zeros: hurdle poisson",
+       subtitle = "observed = red, predicted = blue",
+       x = "number of daphnia with zero offspring",
+       y = "group")
+# nbinom
+pred_df %>%
+  ggplot(aes(x = seq_gen)) +
+  geom_point(aes(y = obs_zeros), col = "red", size = 2, alpha = 0.5) +
+  geom_point(aes(y = pred_zero_hurdle_nb), col = "blue", size = 2, alpha = 0.5) +
+  geom_segment(aes(x = seq_gen, xend = seq_gen, y = pred_zero_hurdle_nb, yend = obs_zeros)) +
+  coord_flip() +
+  labs(title = "Comparing predicted and observed zeros: hurdle negative binomial",
+       subtitle = "observed = red, predicted = blue",
+       x = "number of daphnia with zero offspring",
+       y = "group")
+
+```
+
+Visually, there do not appear to be clear differences between the prediction of zeros between the poisson and negative binomial models. In retrospect, this should be obvious, since both the logistic model parts of the hurdle models are using the exact same covariates and response data so they should give the same predicted numbers of zeros.
+
+To really see why the AIC of the negative binomial model is smaller, we need to look at the predicted counts.
+
+```{r}
+pred_df$pred_response_hurdle_pois = predict(hurdle_pois, newdata = pred_df, type = "response") 
+pred_df$pred_response_hurdle_nb = predict(hurdle_nb, newdata = pred_df, type = "response") 
+
+# plots
+ggplot() +
+  geom_jitter(data = lh_df, mapping = aes(x = gen, y = total_offspring, col = factor(gen)), alpha = 0.5) +
+  geom_point(data = pred_df, mapping = aes(x = as.integer(gen) -1.1, y = pred_response_hurdle_pois), 
+             col = "red", size = 2) +
+  geom_point(data = pred_df, mapping = aes(x = as.integer(gen) -0.9, y = pred_response_hurdle_nb), 
+             col = "blue", size = 2) +
+  facet_wrap(~sequence) +
+  labs(title = "Comparison of predicted offspring to observed offspring",
+       subtitle = "red = poisson, blue = negative binomial",
+       x = "generation", y = "cumulative reproduction")
+```
+
+Ok, so the mean predicted number of offspring is the same for both models. The negative binomial model is probably more likely because it accomodates the overdispersion better than the poisson. 
+
+# Contrasts for cumulative reproduction analysis
+
+All of the following results use the hurdle model with the truncated negative binomial random component for cumulative reproduction. The probability of overcoming the hurdle is modeled using the additive effects of sequence and generation, since the interaction was not significant for the zero count model. (need to figure out notation for hurdle model)
+
+All p-values and confidence intervals were adjusted for multiple comparisons using the multivariate t-distribution. Family-wise confidence level was set at 95% for each of the groups of comparisons, i.e., for each plot presented below.
+
+```{r eval = FALSE}
+# get unique rows of model matrix
+cells <- model.matrix(hurdle_nb) %>% unique()
+colnames(cells) <- colnames(cells) %>% str_remove(pattern = "seq_gen")
+
+# name each row so we can reference it according to seq X gen combinations
+# rownames(cells) <- names(actual_combos)
+
+cell_rownames <- vector("character", length = nrow(cells))
+for ( i in seq_along(cell_rownames)) {
+  cell_rownames[i] <- colnames(cells)[cells[i,] == 1]
+}
+
+# clean up names
+rownames(cells) <- cell_rownames # colnames(cells)
+
+# check that indexing is consistent with model coef order
+# ((names(coef(mod.size)) %>% str_remove(pattern = "seq_gen")) == colnames(cells)) %>% sum() == length(coef(mod.size))
+```
+
+```{r}
+em.repro <- emmeans(hurdle_nb, "seq_gen", nesting = NULL, mode = "response")
+em.reprodf <- data.frame(em.repro)
+```
+
+### Compare mean cumulative reproduction among sequences to control within each generation
+
+```{r }
+# get contrasts using mvt adjustment
+LF_in_gen <- contrast(em.repro, 
+               contrast_list_in_gen,
+               adjust = "mvt")
+# save estimate, CI, and p.value
+sum_in_gen <- summary(LF_in_gen) %>% data.frame()
+contr_in_gen <- confint(LF_in_gen) %>% data.frame()
+contr_in_gen <- contr_in_gen %>% add_column(p.value = sum_in_gen$p.value)
+
+# shorten contrast name, make a col for generation
+contr_in_gen <-
+  contr_in_gen %>% 
+  separate(contrast, into = c("generation", "contrast_name"), sep = ":", remove = FALSE) %>% 
+  mutate(generation = str_remove(generation, "Generation "),
+         generation = factor(generation))
+```
+
+```{r}
+contr_in_gen %>% dplyr::select(-generation, contrast_name) %>% knitr::kable(digits = 3)
+```
+
+```{r}
+contr_in_gen %>%
+  ggplot() +
+  geom_hline(yintercept = 0, col = "red", linetype = "dashed") +
+  geom_point(aes(x = contrast, y = estimate, col = generation), size = 2) +
+  geom_errorbar(aes(x = contrast, ymin = lower.CL, ymax = upper.CL, col = generation)) +
+  scale_x_discrete(labels=contr_in_gen$contrast_name) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(x = "Comparison",
+       y = "Difference in cumulative reproduction")
+```
+
+Similar to the body size results, the differences do not seem to follow any scientifically meaningful pattern.
+
+### Compare difference in mean cumulative reproduction over the course of the experiment
+
+```{r cache=TRUE}
+# put K into a list since ethat is what emmeans::contrast needs to specify linear hypothesis
+contrast_list_time <- list("C: gen 0 - gen 4" = cells["C:0",] - cells["C:4",],
+                      "A: gen 0 - gen 4" = cells["A:0",] - cells["A:4",],
+                      "gen 0 - gen 4: C - A" = (cells["C:0",] - cells["C:4",]) - (cells["A:0",] - cells["A:4",]))
+
+LF_time <- contrast(em.repro, 
+               contrast_list_time,
+               adjust = "mvt")
+sum_time <- summary(LF_time) %>% data.frame()
+contr_time <- confint(LF_time) %>% data.frame()
+contr_time <- contr_time %>% add_column(p.value = sum_time$p.value)
+```
+
+```{r}
+contr_time %>% knitr::kable(digits = 3)
+```
+
+
+```{r}
+contr_time %>%
+  ggplot() +
+   geom_hline(yintercept = 0, col = "red", linetype = "dashed") +
+  geom_point(aes(x = contrast, y = estimate), size = 2) + 
+  geom_errorbar(aes(x = contrast, ymin = lower.CL, ymax = upper.CL), width = 0) +
+  labs(y = "difference in cumulative reproduction")
+```
+
+Cumulative reproduction decreased from generation 0 to generation 4 for both antibiotic and control sequences. The change in cumulative was 7.3 (SE = 1.64) offspring greater for daphnia in the antibiotic sequence compared to the control sequence.
+
+### Compare the mean cummulative reproduction at first recovery time by number of generations exposed to antibiotics
+
+```{r cache=TRUE}
+contrast_list_first_recovery <- 
+  list("R1 - R2" = cells["R1:1",] - cells["R2:2",],
+       "R1 - R3" = cells["R1:1",] - cells["R3:3",],
+       "R1 - R4" = cells["R1:1",] - cells["R4:4",],
+       "R2 - R3" = cells["R2:2",] - cells["R3:3",],
+       "R2 - R4" = cells["R2:2",] - cells["R4:4",],
+       "R3 - R4" = cells["R3:3",] - cells["R4:4",])
+
+LF_first_recovery <- contrast(em.repro,
+                              contrast_list_first_recovery,
+                              adjust = "mvt")
+sum_first_recovery <- summary(LF_first_recovery) %>% data.frame()
+first_recovery <- confint(LF_first_recovery) %>% data.frame()
+
+first_recovery <- first_recovery %>% add_column(p.value = sum_first_recovery$p.value)
+```
+
+```{r}
+first_recovery
+```
+
+
+```{r}
+first_recovery %>%
+  ggplot() +
+   geom_hline(yintercept = 0, col = "red", linetype = "dashed") +
+  geom_point(aes(x = contrast, y = estimate), size = 2) + 
+  geom_errorbar(aes(x = contrast, ymin = lower.CL, ymax = upper.CL), width = 0) +
+  labs(y = "difference in cumulative reproduction")
+```
+
+It is challenging to interpret these results because they are confounded by the generation specific differences in reproduction.
 
 ```{r echo = FALSE}
 knitr::knit_exit()

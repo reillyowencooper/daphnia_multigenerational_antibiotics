@@ -182,6 +182,8 @@ contr_in_gen <-
   separate(contrast, into = c("generation", "contrast_name"), sep = ":", remove = FALSE) %>% 
   mutate(generation = str_remove(generation, "Generation "),
          generation = factor(generation))
+
+contr_in_gen %>% knitr::kable()
 ```
 
 ```{r}
@@ -210,6 +212,7 @@ LF_time <- contrast(em.size,
 sum_time <- summary(LF_time) %>% data.frame()
 contr_time <- confint(LF_time) %>% data.frame()
 contr_time <- contr_time %>% add_column(p.value = sum_time$p.value)
+contr_time %>% knitr::kable()
 ```
 
 ```{r}
@@ -238,6 +241,8 @@ sum_first_recovery <- summary(LF_first_recovery) %>% data.frame()
 first_recovery <- confint(LF_first_recovery) %>% data.frame()
 
 first_recovery <- first_recovery %>% add_column(p.value = sum_first_recovery$p.value)
+
+first_recovery %>% knitr::kable()
 
 first_recovery %>%
   ggplot() +
@@ -432,7 +437,26 @@ summary(glm_bin)
 car::Anova(glm_bin)
 ```
 
-Interaction isn't significant. But, there are tons of NA for parameter estimates due to missing combinations and over-parameterization. Ignoring this for now, I'll use the sequence and generation without interaction as covariates for the hurdle part of the model.
+Interaction isn't significant. But, there are tons of NA for parameter estimates due to missing combinations and over-parameterization. Ignoring this for now, I'll use the sequence and generation without interaction as covariates for the hurdle part of the model. EDIT: actually, I shouldn't even be considering this "saturated" model, because of complete seperation. See below.
+
+```{r}
+# check for convergence issues
+glm_bin2 <- glm(I(total_offspring > 0) ~ sequence * factor(gen), family = binomial, data = lh_df,
+                control = list(maxit = 50, epsilon = 1e-12))
+cbind(coef(glm_bin), coef(glm_bin2))
+```
+
+There's clear evidence for complete seperation (which we already knew because some cells have zero instances of no offspring). But are there problems with the no interaction logistic regression?
+
+```{r}
+# check for convergence issues
+glm_bin <- glm(I(total_offspring > 0) ~ sequence + factor(gen), family = binomial, data = lh_df)
+glm_bin2 <- glm(I(total_offspring > 0) ~ sequence + factor(gen), family = binomial, data = lh_df,
+                control = list(maxit = 50, epsilon = 1e-12))
+cbind(coef(glm_bin), coef(glm_bin2))
+```
+
+No, there are not problems. So maybe a more important reason for using this linear predictor is that the model can actually converge.
 
 ```{r}
 hurdle_pois <-
@@ -629,7 +653,7 @@ first_recovery <- first_recovery %>% add_column(p.value = sum_first_recovery$p.v
 ```
 
 ```{r}
-first_recovery
+first_recovery %>% knitr::kable()
 ```
 
 

@@ -133,6 +133,24 @@ em.size <- emmeans(mod.size, "seq_gen")
 em.sizedf <- data.frame(em.size)
 ```
 
+```{r}
+plot_size <-
+  em.sizedf %>% 
+  separate(col = seq_gen, into = c("sequence", "gen"), sep = ":", remove = FALSE) %>%
+  mutate(sequence = factor(sequence, levels = levels(lh_df$sequence)),
+         gen = factor(gen))
+
+ggplot() +
+  geom_jitter(data = lh_df, mapping = aes(x = gen, y = final_size, col = factor(gen)), alpha = 0.5) +
+  geom_point(data = plot_size, mapping = aes(x = as.integer(gen) - 1, y = emmean), size = 2) +
+  geom_errorbar(data = plot_size, mapping = aes(x = as.integer(gen) - 1, ymin = lower.CL, ymax = upper.CL)) +
+  facet_wrap(~sequence) +
+  labs(x = "generation", y = "final size in mm (95% CI)",
+       col = "generation")
+```
+
+Estimated cell means and 95% Wald confidence intervals adjusted for family-wise error.
+
 ```{r eval = FALSE}
 # compare emmeans to observed cell means
 # they are equal???
@@ -482,6 +500,17 @@ pred_df <- pred_df %>%
          pred_zero_hurdle_nb = pzero_hurdle_nb*cell_count)
 ```
 
+```{r}
+pred_df %>% summarise(total_pois = sum(pred_zero_pois),
+                      total_nb = sum(pred_zero_nb),
+                      total_hurdle_pois = sum(pred_zero_hurdle_pois),
+                      total_hurdle_nb = sum(pred_zero_hurdle_nb),
+                      total_observed = sum(obs_zeros)) %>%
+  knitr::kable()
+```
+
+The predicted number of daphnia with no offspring using hurdle models is clearly more consistent with the observed number of zeros. The non-hurdle models perform very poorly.
+
 ```{r fig.show = "hold", out.width = "50%"}
 #  poisson
 pred_df %>%
@@ -561,6 +590,24 @@ rownames(cells) <- cell_rownames # colnames(cells)
 em.repro <- emmeans(hurdle_nb, "seq_gen", nesting = NULL, mode = "response")
 em.reprodf <- data.frame(em.repro)
 ```
+
+```{r}
+plot_repro <-
+  em.reprodf %>% 
+  separate(col = seq_gen, into = c("sequence", "gen"), sep = ":", remove = FALSE) %>%
+  mutate(sequence = factor(sequence, levels = levels(lh_df$sequence)),
+         gen = factor(gen))
+
+ggplot() +
+  geom_jitter(data = lh_df, mapping = aes(x = gen, y = total_offspring, col = factor(gen)), alpha = 0.5) +
+  geom_point(data = plot_repro, mapping = aes(x = as.integer(gen) - 1, y = emmean), size = 2) +
+  geom_errorbar(data = plot_repro, mapping = aes(x = as.integer(gen) - 1, ymin = lower.CL, ymax = upper.CL)) +
+  facet_wrap(~sequence) +
+  labs(x = "generation", y = "cumulative reproduction",
+       col = "generation")
+```
+
+Plot of expected cumulative reproduction from negative binomial hurdle model with 95% Wald CI adjusted for family-wise error.
 
 ### Compare mean cumulative reproduction among sequences to control within each generation
 

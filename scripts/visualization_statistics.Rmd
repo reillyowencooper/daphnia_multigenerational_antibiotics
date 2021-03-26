@@ -408,21 +408,51 @@ beta_by_gen_trt_plot <- plot_ordination(microbiome_correct_gen, full_ord,
   annotate("text", x = 0, y = -2.3, label = trt_p, parse = TRUE)
 ```
 
-Individual pairwise comparisons of community composition in the final generation of each treatment
-to the first of each treatment, then comparing the final of each treatment to each other.
+Individual pairwise comparisons of community composition.
 ```{r pairwise permanovas, warning=FALSE, error=FALSE}
-# Comparisons are: C5:C1, A5:A1, R1->4:A1, R2->3:A2, R3->2:A3, R4->1:A4, A5:C5, R1->4:C5, R2->3:C5, R3->2:C5, R4->1:C5.
+# Making subset phyloseq objects. There are several sets of pairwise comparisons I want to do. These include:
+# Each generation's control vs. antibiotic (e.g., C1 - A1, C2 - A2)
+# Each generation's recovery against its generation of control (e.g., R1->1 - C1, R2->1 - C2)
+# Each generation's recovery against its total generation (e.g., R1->1 - C2, R2->1 - C3)
+# Each generation's recovery against other recovery treatments with the same number of generations in recovery (e.g., R1->1 - R2->1, R1->1 - R3->1)
+# Each generation's recovery against the first generation of control (excluding R1->1 - C1)
 
-# Making subset phyloseq objects
-c5c1 <- subset_samples(microbiome_correct_gen, treatment %in% c("C5", "C1"))
-a5a1 <- subset_samples(microbiome_correct_gen, treatment %in% c("A5", "A1"))
-a5c5 <- subset_samples(microbiome_correct_gen, treatment %in% c("A5", "C5"))
-r14c5 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→4", "C5"))
-r23c5 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→3", "C5"))
-r32c5 <- subset_samples(microbiome_correct_gen, treatment %in% c("R3→2", "C5"))
+# CTRL v AB
+c1a1 <- subset_samples(microbiome_correct_gen, treatment %in% c("C1", "A1"))
+c2a2 <- subset_samples(microbiome_correct_gen, treatment %in% c("C2", "A2"))
+c3a3 <- subset_samples(microbiome_correct_gen, treatment %in% c("C3", "A3"))
+c4a4 <- subset_samples(microbiome_correct_gen, treatment %in% c("C4", "A4"))
+c5a5 <- subset_samples(microbiome_correct_gen, treatment %in% c("C5", "A5"))
+# REC v CTRL same gen
+r11c1 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→1", "C1"))
+r21c2 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→1", "C2"))
+r31c3 <- subset_samples(microbiome_correct_gen, treatment %in% c("R3→1", "C3"))
+r41c4 <- subset_samples(microbiome_correct_gen, treatment %in% c("R4→1", "C4"))
+# REC v CTRL total gen
+r11c2 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→1", "C2"))
+r21c3 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→1", "C3"))
+r31c4 <- subset_samples(microbiome_correct_gen, treatment %in% c("R3→1", "C4"))
 r41c5 <- subset_samples(microbiome_correct_gen, treatment %in% c("R4→1", "C5"))
+# REC v REC with same gen of recovery
+r11r21 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→1", "R2→1"))
+r11r31 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→1", "R3→1"))
+r11r41 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→1", "R4→1"))
+r21r31 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→1", "R3→1"))
+r21r41 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→1", "R4→1"))
+r31r41 <- subset_samples(microbiome_correct_gen, treatment %in% c("R3→1", "R4→1"))
+r12r22 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→2", "R2→2"))
+r12r32 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→2", "R3→2"))
+r22r32 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→2", "R3→2"))
+r13r23 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→3", "R2→3"))
+# REC v CTRL 1 (excluding R1->1 - C1)
+r21c1 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→1", "C1"))
+r31c1 <- subset_samples(microbiome_correct_gen, treatment %in% c("R3→1", "C1"))
+r41c1 <- subset_samples(microbiome_correct_gen, treatment %in% c("R4→1", "C1"))
 
-pairwise_list <- list(c5c1, a5a1, a5c5, r14c5, r23c5, r32c5, r41c5)
+pairwise_list <- list(c1a1, c2a2, c3a3, c4a4, c5a5, r11c1, r21c2, r31c3, r41c4,
+                      r11c2, r21c3, r31c4, r41c5, r11r21, r11r31, r11r41, r21r31, 
+                      r21r41, r31r41, r12r22, r12r32, r22r32, r13r23,
+                      r21c1, r31c1, r41c1)
 # Making function to transform to relative abundance, extract otus and abundances, and run permanova
 get_permanova <- function(ps_obj) {
   rel <- microbiome::transform(ps_obj, "compositional")
@@ -438,21 +468,61 @@ get_permanova <- function(ps_obj) {
 pairwise_res <- lapply(pairwise_list, get_permanova)
 
 pairwise_output <- plyr::ldply(pairwise_res, data.frame) %>% 
-  mutate(variables = rep(c("treatment", "Residuals", "Total"), times = 7)) %>%
-  mutate(group1 = c(rep("C5", 3),
-                        rep("A5", 3),
-                        rep("A5", 3),
-                        rep("R1→4", 3),
-                        rep("R2→3", 3),
-                        rep("R3→2", 3),
-                        rep("R4→1", 3)),
-         group2 = c(rep("C1", 3),
-                    rep("A1", 3),
+  mutate(variables = rep(c("treatment", "Residuals", "Total"), times = 26)) %>%
+  mutate(group1 = c(rep("C1", 3),
+                    rep("C2", 3),
+                    rep("C3", 3),
+                    rep("C4", 3),
                     rep("C5", 3),
+                    rep("R1→1", 3),
+                    rep("R2→1", 3),
+                    rep("R3→1", 3),
+                    rep("R4→1", 3),
+                    rep("R1→1", 3),
+                    rep("R2→1", 3),
+                    rep("R3→1", 3),
+                    rep("R4→1", 3),
+                    rep("R1→1", 3),
+                    rep("R1→1", 3),
+                    rep("R1→1", 3),
+                    rep("R2→1", 3),
+                    rep("R2→1", 3),
+                    rep("R3→1", 3),
+                    rep("R1→2", 3),
+                    rep("R1→2", 3),
+                    rep("R2→2", 3),
+                    rep("R1→3", 3),
+                    rep("R2→1", 3),
+                    rep("R3→1", 3),
+                    rep("R4→1", 3)
+                    ),
+         group2 = c(rep("A1", 3),
+                    rep("A2", 3),
+                    rep("A3", 3),
+                    rep("A4", 3),
+                    rep("A5", 3),
+                    rep("C1", 3),
+                    rep("C2", 3),
+                    rep("C3", 3),
+                    rep("C4", 3),
+                    rep("C2", 3),
+                    rep("C3", 3),
+                    rep("C4", 3),
                     rep("C5", 3),
-                    rep("C5", 3),
-                    rep("C5", 3),
-                    rep("C5", 3)))
+                    rep("R2→1", 3),
+                    rep("R3→1", 3),
+                    rep("R4→1", 3),
+                    rep("R3→1", 3),
+                    rep("R4→1", 3),
+                    rep("R4→1", 3),
+                    rep("R2→2", 3),
+                    rep("R3→2", 3),
+                    rep("R3→2", 3),
+                    rep("R2→3", 3),
+                    rep("C1", 3),
+                    rep("C1", 3),
+                    rep("C1", 3)
+                    ))
 
 # Saving to file
 write.csv(pairwise_output, here("statistics", "pairwise_betadiv_permanovas.csv"))

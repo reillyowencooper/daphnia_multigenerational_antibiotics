@@ -55,7 +55,7 @@
 1,control,6,2.888,2,0,21,12,4,18,4,NA,NA,control_gen1,C2
 1,control,7,3.027,2,0,21,16,6,NA,NA,NA,NA,control_gen1,C2
 1,control,8,NA,2,0,10,NA,NA,NA,NA,NA,NA,control_gen1,C2
-1,control,9,2.979,2,0,18,20,4,NA,NA,NA,NA,control_gen1,C2
+1,control,9,2.979,2,0,20,18,4,NA,NA,NA,NA,control_gen1,C2
 1,control,10,3.074,2,0,21,14,7,18,6,NA,NA,control_gen1,C2
 1,control,11,2.946,2,0,21,12,1,16,2,19,6,control_gen1,C2
 1,control,12,2.76,2,0,21,12,11,16,8,NA,NA,control_gen1,C2
@@ -377,7 +377,7 @@
 4,antibiotic,21,3.316,0,5,21,13,8,17,10,NA,NA,antibiotic_gen4,A5
 4,antibiotic,22,NA,0,5,8,NA,NA,NA,NA,NA,NA,antibiotic_gen4,A5
 4,antibiotic,23,3.366,0,5,21,12,9,16,7,20,8,antibiotic_gen4,A5
-4,antibiotic,24,3.449,0,5,1,12,9,16,6,20,7,antibiotic_gen4,A5
+4,antibiotic,24,3.449,0,5,21,12,9,16,6,20,7,antibiotic_gen4,A5
 4,recovery,1,3.19,4,1,21,12,2,15,9,20,4,recovery_gen4.0,R4->1
 4,recovery,2,3.378,4,1,21,12,3,15,8,20,6,recovery_gen4.0,R4->1
 4,recovery,3,3.323,4,1,21,12,1,15,8,20,6,recovery_gen4.0,R4->1

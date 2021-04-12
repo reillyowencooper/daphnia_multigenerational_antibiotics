@@ -137,15 +137,6 @@ survival <- survival %>%
 
 Daphnia final size visualization and statistics.
 ```{r size, warning=FALSE, error=FALSE}
-# Statistics
-final_size_aov <- aov(final_size ~ gen*treatment, data = life_history)
-final_size_aov_summary <- anova_summary(final_size_aov)
-final_size_tukey <- tukey_hsd(final_size_aov)
-
-# Saving statistics
-write.csv(final_size_aov_summary, here("statistics", "final_size_anova.csv"))
-write.csv(final_size_tukey, here("statistics", "final_size_tukey.csv"))
-
 # Visualizing final size by generation
 size_by_generation_plot <- ggplot(life_history, aes(gen, final_size)) +
   geom_boxplot(outlier.shape = NA) +
@@ -153,12 +144,7 @@ size_by_generation_plot <- ggplot(life_history, aes(gen, final_size)) +
   scale_color_manual(values = treatment_colors,
                      name = "Treatment Type") +
   xlab("Generation") +
-  ylab("Final size (mm)") +
-  annotate("text", x = 1.25, y = 2.4, label = "Anova, p<0.0001") +
-  annotate("text", x = 2, y = 3.8, label = "*") +
-  annotate("text", x = 3, y = 3.8, label = "ns") +
-  annotate("text", x = 4, y = 3.8, label = "ns") +
-  annotate("text", x = 5, y = 3.8, label = "****") +
+  ylab("Final size (mm)")
   scale_x_discrete(labels = gen_labels)
 
 # Visualizing size by treatment
@@ -169,21 +155,11 @@ size_by_treatment_plot <- ggplot(life_history, aes(figure_labels, final_size)) +
                      name = "Treatment Type") +
   ylab("Final size (mm)") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
-        axis.title.x = element_blank()) +
-  annotate("text", x = 4, y = 2.4, label = "Anova, p=0.0003")
+        axis.title.x = element_blank())
 ```
 
 Cumulative reproduction.
 ```{r cumulative reproduction, warning=FALSE, error=FALSE}
-# Statistics
-cum_repro_aov <- aov(cumulative_reproduction ~ gen*treatment, data = life_history)
-cum_repro_aov_summary <- anova_summary(cum_repro_aov)
-cum_repro_tukey <- tukey_hsd(cum_repro_aov)
-
-# Saving statistics
-write.csv(cum_repro_aov_summary, here("statistics", "cumulative_reproduction_anova.csv"))
-write.csv(cum_repro_tukey, here("statistics", "cumulative_reproduction_tukey.csv"))
-
 # Visualizing by generation
 cum_repro_by_generation_plot <- ggplot(life_history, aes(gen, cumulative_reproduction)) +
   geom_boxplot(outlier.shape = NA) +
@@ -191,12 +167,7 @@ cum_repro_by_generation_plot <- ggplot(life_history, aes(gen, cumulative_reprodu
   scale_color_manual(values = treatment_colors,
                      name = "Treatment Type") +
   xlab("Generation") +
-  ylab("Cumulative reproduction") +
-  annotate("text", x = 1.25, y = 28, label = "Anova, p<0.0001") +
-  annotate("text", x = 2, y = 32, label = "***") +
-  annotate("text", x = 3, y = 32, label = "ns") +
-  annotate("text", x = 4, y = 32, label = "ns") +
-  annotate("text", x = 5, y = 32, label = "****") +
+  ylab("Cumulative reproduction")
   scale_x_discrete(labels = gen_labels)
 
 # Visualization by treatment
@@ -207,8 +178,7 @@ cum_repro_by_treatment_plot <- ggplot(life_history, aes(figure_labels, cumulativ
                      name = "Treatment Type") +
   ylab("Cumulative reproduction") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
-        axis.title.x = element_blank()) +
-  annotate("text", x = 4, y = 28, label = "Anova, p=0.31")
+        axis.title.x = element_blank())
 ```
 
 Survival.
@@ -417,42 +387,43 @@ Individual pairwise comparisons of community composition.
 # Each generation's recovery against other recovery treatments with the same number of generations in recovery (e.g., R1->1 - R2->1, R1->1 - R3->1)
 # Each generation's recovery against the first generation of control (excluding R1->1 - C1)
 
-# CTRL v AB
+# REC and AB to CTRL within the same generation (column in Figure 1)
 c1a1 <- subset_samples(microbiome_correct_gen, treatment %in% c("C1", "A1"))
+c2r11 <- subset_samples(microbiome_correct_gen, treatment %in% c("C2", "R1→1"))
 c2a2 <- subset_samples(microbiome_correct_gen, treatment %in% c("C2", "A2"))
+c3r12 <- subset_samples(microbiome_correct_gen, treatment %in% c("C3", "R1→2"))
+c3r21 <- subset_samples(microbiome_correct_gen, treatment %in% c("C3", "R2→1"))
 c3a3 <- subset_samples(microbiome_correct_gen, treatment %in% c("C3", "A3"))
+c4r13 <- subset_samples(microbiome_correct_gen, treatment %in% c("C4", "R1→3"))
+c4r22 <- subset_samples(microbiome_correct_gen, treatment %in% c("C4", "R2→2"))
+c4r31 <- subset_samples(microbiome_correct_gen, treatment %in% c("C4", "R3→1"))
 c4a4 <- subset_samples(microbiome_correct_gen, treatment %in% c("C4", "A4"))
+c5r14 <- subset_samples(microbiome_correct_gen, treatment %in% c("C5", "R1→4"))
+c5r23 <- subset_samples(microbiome_correct_gen, treatment %in% c("C5", "R2→3"))
+c5r32 <- subset_samples(microbiome_correct_gen, treatment %in% c("C5", "R3→2"))
+c5r41 <- subset_samples(microbiome_correct_gen, treatment %in% c("C5", "R4→1"))
 c5a5 <- subset_samples(microbiome_correct_gen, treatment %in% c("C5", "A5"))
-# REC v CTRL same gen
-r11c1 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→1", "C1"))
-r21c2 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→1", "C2"))
-r31c3 <- subset_samples(microbiome_correct_gen, treatment %in% c("R3→1", "C3"))
-r41c4 <- subset_samples(microbiome_correct_gen, treatment %in% c("R4→1", "C4"))
-# REC v CTRL total gen
-r11c2 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→1", "C2"))
-r21c3 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→1", "C3"))
-r31c4 <- subset_samples(microbiome_correct_gen, treatment %in% c("R3→1", "C4"))
-r41c5 <- subset_samples(microbiome_correct_gen, treatment %in% c("R4→1", "C5"))
-# REC v REC with same gen of recovery
+# Within treatment (CTRL 1 - 5, AB 1-5)
+c1c5 <- subset_samples(microbiome_correct_gen, treatment %in% c("C1", "C5"))
+a1a5 <- subset_samples(microbiome_correct_gen, treatment %in% c("A1", "A5"))
+# REC to each other in first generation out of AB (first REC in each sequence, Fig 1)
 r11r21 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→1", "R2→1"))
 r11r31 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→1", "R3→1"))
 r11r41 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→1", "R4→1"))
 r21r31 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→1", "R3→1"))
 r21r41 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→1", "R4→1"))
 r31r41 <- subset_samples(microbiome_correct_gen, treatment %in% c("R3→1", "R4→1"))
-r12r22 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→2", "R2→2"))
-r12r32 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→2", "R3→2"))
-r22r32 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→2", "R3→2"))
-r13r23 <- subset_samples(microbiome_correct_gen, treatment %in% c("R1→3", "R2→3"))
-# REC v CTRL 1 (excluding R1->1 - C1)
-r21c1 <- subset_samples(microbiome_correct_gen, treatment %in% c("R2→1", "C1"))
-r31c1 <- subset_samples(microbiome_correct_gen, treatment %in% c("R3→1", "C1"))
-r41c1 <- subset_samples(microbiome_correct_gen, treatment %in% c("R4→1", "C1"))
 
-pairwise_list <- list(c1a1, c2a2, c3a3, c4a4, c5a5, r11c1, r21c2, r31c3, r41c4,
-                      r11c2, r21c3, r31c4, r41c5, r11r21, r11r31, r11r41, r21r31, 
-                      r21r41, r31r41, r12r22, r12r32, r22r32, r13r23,
-                      r21c1, r31c1, r41c1)
+
+pairwise_list <- list(c1a1, 
+                      c2r11, c2a2, 
+                      c3r12, c3r21, c3a3, 
+                      c4r13, c4r22, c4r31, c4a4, 
+                      c5r14, c5r23, c5r32, c5r41, c5a5,
+                      c1c5, a1a5,
+                      r11r21, r11r31, r11r41,
+                      r21r31, r21r41,
+                      r31r41)
 # Making function to transform to relative abundance, extract otus and abundances, and run permanova
 get_permanova <- function(ps_obj) {
   rel <- microbiome::transform(ps_obj, "compositional")
@@ -468,60 +439,54 @@ get_permanova <- function(ps_obj) {
 pairwise_res <- lapply(pairwise_list, get_permanova)
 
 pairwise_output <- plyr::ldply(pairwise_res, data.frame) %>% 
-  mutate(variables = rep(c("treatment", "Residuals", "Total"), times = 26)) %>%
+  mutate(variables = rep(c("treatment", "Residuals", "Total"), times = 23)) %>%
   mutate(group1 = c(rep("C1", 3),
                     rep("C2", 3),
+                    rep("C2", 3),
+                    rep("C3", 3),
+                    rep("C3", 3),
                     rep("C3", 3),
                     rep("C4", 3),
+                    rep("C4", 3),
+                    rep("C4", 3),
+                    rep("C4", 3),
                     rep("C5", 3),
-                    rep("R1→1", 3),
-                    rep("R2→1", 3),
-                    rep("R3→1", 3),
-                    rep("R4→1", 3),
-                    rep("R1→1", 3),
-                    rep("R2→1", 3),
-                    rep("R3→1", 3),
-                    rep("R4→1", 3),
+                    rep("C5", 3),
+                    rep("C5", 3),
+                    rep("C5", 3),
+                    rep("C5", 3),
+                    rep("C1", 3),
+                    rep("A1", 3),
                     rep("R1→1", 3),
                     rep("R1→1", 3),
                     rep("R1→1", 3),
                     rep("R2→1", 3),
                     rep("R2→1", 3),
-                    rep("R3→1", 3),
-                    rep("R1→2", 3),
-                    rep("R1→2", 3),
-                    rep("R2→2", 3),
-                    rep("R1→3", 3),
-                    rep("R2→1", 3),
-                    rep("R3→1", 3),
-                    rep("R4→1", 3)
+                    rep("R3→1", 3)
                     ),
          group2 = c(rep("A1", 3),
+                    rep("R1→1", 3),
                     rep("A2", 3),
+                    rep("R1→2", 3),
+                    rep("R2→1", 3),
                     rep("A3", 3),
+                    rep("R1→3", 3),
+                    rep("R2→2", 3),
+                    rep("R3→1", 3),
                     rep("A4", 3),
+                    rep("R1→4", 3),
+                    rep("R2→3", 3),
+                    rep("R3→2", 3),
+                    rep("R4→1", 3),
                     rep("A5", 3),
-                    rep("C1", 3),
-                    rep("C2", 3),
-                    rep("C3", 3),
-                    rep("C4", 3),
-                    rep("C2", 3),
-                    rep("C3", 3),
-                    rep("C4", 3),
                     rep("C5", 3),
+                    rep("A5", 3),
                     rep("R2→1", 3),
                     rep("R3→1", 3),
                     rep("R4→1", 3),
                     rep("R3→1", 3),
                     rep("R4→1", 3),
-                    rep("R4→1", 3),
-                    rep("R2→2", 3),
-                    rep("R3→2", 3),
-                    rep("R3→2", 3),
-                    rep("R2→3", 3),
-                    rep("C1", 3),
-                    rep("C1", 3),
-                    rep("C1", 3)
+                    rep("R4→1", 3)
                     ))
 
 # Saving to file

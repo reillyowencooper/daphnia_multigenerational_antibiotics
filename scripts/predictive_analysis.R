@@ -132,26 +132,61 @@ asv <- asv %>% mutate(selected = OTU %in% key_otu)
 
 asv_selected <- left_join(asv, coef_df)
 
+# get only the total (1888) OTUs, taxomomic info, and beta
+asv_selected <-
+  asv %>%
+  select(OTU, Kingdom:Species) %>% 
+  left_join(coef_df, by = "OTU") %>%
+  unique()
+
+asv_selected_ord <-
+  asv_selected %>%
+  arrange(beta) %>%
+  mutate(otu_order = factor(OTU, unique(OTU)),
+         species_order = factor(Species, unique(Species)))
+
 # plot stuff
-asv_selected %>%
-  ggplot(aes(group = Order, y = beta)) +
-  geom_boxplot()
+# asv_selected %>%
+#   ggplot(aes(group = Order, y = beta)) +
+#   geom_boxplot()
 
-# 
-coef_df %>%
-  arrange(beta) %>% hist
-
+# dist of betas
 hist(coef_df$beta)
 
-# find largest magnitude
+# find 10 most extreme
+# negative effect
 asv_selected %>%
   filter(!is.na(beta)) %>%
   arrange(beta) %>%
   slice_head(n = 10) %>%
   select(Kingdom:beta)
-
+# positive effect
 asv_selected %>%
   filter(!is.na(beta)) %>%
   arrange(beta) %>%
   slice_tail(n = 10) %>%
   select(Kingdom:beta)
+
+# plot all beta
+asv_selected %>%
+  filter(!is.na(beta)) %>%
+  ggplot(aes(x = Species, y = beta, col = Class)) +
+  geom_point() +
+  geom_lin
+  geom_hline(yintercept = 0, linetype = "dashed", col = "red") +
+  coord_flip()
+  
+# ordered plot of regression coefficients for spp selected by elastic net
+asv_selected_ord %>%
+    filter(!is.na(beta)) %>%
+    ggplot(aes(x = species_order, y = beta, col = Class)) +
+    geom_point(size = 5) +
+  geom_hline(yintercept = 0, linetype = "dashed", col = "red") +
+  coord_flip() +
+  theme_bw() +
+  labs(title = "65 Microbial taxa predictive of average Daphnia body size",
+       subtitle = "Elastic net selection (sparsest model within 1 SE of best model)",
+       x = "Species name",
+       y = expression(regression~coefficient~beta))
+
+  
